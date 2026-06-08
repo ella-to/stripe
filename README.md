@@ -13,6 +13,69 @@ import "ella.to/stripe"
 client := stripe.New(os.Getenv("STRIPE_SECRET_KEY"))
 ```
 
+## Use cases
+
+### Direct SaaS billing (no Connect)
+
+If you are building a regular SaaS — one Stripe account, your own customers — you
+do not need Connect at all. Authenticate with either your secret key or an OAuth
+access token, then call the billing methods directly:
+
+```go
+// Option A — secret key
+client := stripe.New(os.Getenv("STRIPE_SECRET_KEY"))
+
+// Option B — OAuth access token (e.g. stored after a one-time Connect OAuth flow)
+tok := &stripe.OAuthToken{
+    AccessToken:  os.Getenv("STRIPE_ACCESS_TOKEN"),
+    StripeUserID: os.Getenv("STRIPE_ACCOUNT_ID"),
+}
+client = stripe.NewFromOAuthToken(tok)
+```
+
+Once you have a client, the full billing surface is available:
+
+```go
+// Customer
+cus, _ := client.CreateCustomer(ctx, stripe.CreateCustomerParams{Email: "alice@example.com", Name: "Alice"})
+
+// Subscription with a trial
+plan, _ := client.CreatePlan(ctx, stripe.PlanParams{ProductName: "Pro", Amount: stripe.Dollars(29), Interval: stripe.Monthly})
+sub, _  := client.Subscribe(ctx, stripe.SubscribeParams{Customer: cus.ID, PriceID: plan.ID, TrialDays: 14})
+fmt.Println("access until:", stripe.SubscriptionAccessUntil(sub))
+
+// Usage-based quota ("1 000 API calls for $2, then $2 per 1 000 more")
+quota, _ := client.SetupMeteredQuota(ctx, stripe.SetupMeteredQuotaParams{
+    ProductName: "API Requests", EventName: "api_request",
+    AmountPerPackage: stripe.Dollars(2), PackageSize: 1000, Interval: stripe.Monthly,
+})
+client.Subscribe(ctx, stripe.SubscribeParams{Customer: cus.ID, PriceID: quota.Price.ID})
+client.ReportUsage(ctx, cus.ID, "api_request", 1500) // $4
+
+// One-off purchase
+cart    := stripe.NewCart("usd").AddItem("T-Shirt", stripe.Dollars(35), 1).WithAutomaticTax()
+session, _ := client.Checkout(ctx, stripe.CheckoutParams{Cart: cart, SuccessURL: successURL, CancelURL: cancelURL})
+// redirect buyer to session.URL
+
+// Refund (full or partial)
+client.RefundPayment(ctx, stripe.RefundParams{PaymentIntentID: "pi_...", Reason: stripe.RefundRequestedByCustomer})
+client.RefundPayment(ctx, stripe.RefundParams{PaymentIntentID: "pi_...", Amount: stripe.Dollars(5)})
+
+// Cancel subscription with prorated refund
+client.UnsubscribeWithRefund(ctx, sub.ID)
+```
+
+See [`examples/saas`](./examples/saas) for the complete runnable program.
+
+### Multi-tenant marketplace (Stripe Connect)
+
+When your platform hosts many stores or sellers, each store needs its own Stripe
+account so payouts go directly to them and fees are split automatically. See the
+[Connect](#connect) section and the [`examples/oauthsaas`](./examples/oauthsaas)
+example for the full multi-tenant flow.
+
+---
+
 ## Features
 
 | Area | What you get |
@@ -117,18 +180,7 @@ until := stripe.SubscriptionAccessUntil(sub) // handles trialing, cancel-at-peri
 client.SwapPlan(ctx, sub.ID, yearly.ID)
 
 // Cancel at period end — customer keeps access until the paid period expires.
-cancelled, _ := client.Unsubscribe(ctx, sub.ID, stripe.CancelAtPeriodEnd)
-fmt.Println("access until:", stripe.SubscriptionAccessUntil(cancelled))
-
-// Customer changed their mind — re-enable before the period ends.
-client.Resubscribe(ctx, sub.ID)
-
-// Cancel immediately AND refund the last invoice (money-back guarantee).
-sub, refund, _ := client.UnsubscribeWithRefund(ctx, sub.ID)
-
-// List all subscriptions for a customer.
-subs, _ := client.ListSubscriptions(ctx, "cus_123")
-```
+ 
 
 ### Quota / usage based billing
 
@@ -362,6 +414,7 @@ Runnable programs live in [`examples/`](./examples):
 
 | Example | What it covers |
 |---------|---------------|
+| `examples/saas` | **Start here for direct SaaS billing** — customer, subscription, quota, purchase, refund; both secret key and OAuth token auth |
 | `examples/customers` | Customer lifecycle: create, get, update, delete |
 | `examples/connect` | Connected accounts + OAuth onboarding |
 | `examples/subscriptions` | Plans, trials, coupons, access timeline, resubscribe, cancel with refund |
@@ -380,13 +433,15 @@ from the environment.
 
 | Variable | Used by |
 |----------|---------|
-| `STRIPE_SECRET_KEY` | All examples |
+| `STRIPE_SECRET_KEY` | All examples (Option A auth) |
+| `STRIPE_ACCESS_TOKEN` | `saas` — OAuth access token (Option B auth) |
+| `STRIPE_ACCOUNT_ID` | `saas` — Stripe user ID paired with `STRIPE_ACCESS_TOKEN` |
 | `STRIPE_CONNECT_CLIENT_ID` | `connect`, `oauthsaas` — the `ca_...` client id |
 | `STRIPE_OAUTH_REDIRECT_URI` | `connect` — must match your Stripe Connect settings |
 | `STRIPE_WEBHOOK_SECRET` | `webhook` — the `whsec_...` signing secret |
-| `STRIPE_CUSTOMER_ID` | `subscriptions`, `quota`, `refund` |
+| `STRIPE_CUSTOMER_ID` | `saas`, `subscriptions`, `quota`, `refund` — skip customer creation if set |
 | `STRIPE_STORE_ACCOUNT_ID` | `refund` — connected account to charge |
-| `STRIPE_PAYMENT_INTENT_ID` | `refund` — optional, to demonstrate a refund |
+| `STRIPE_PAYMENT_INTENT_ID` | `saas`, `refund` — optional, to demonstrate a standalone refund |
 
 ## Testing
 

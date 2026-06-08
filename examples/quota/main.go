@@ -1,6 +1,7 @@
 // Command quota demonstrates usage based / quota billing: package pricing with
 // automatic overage ("1000 requests for $2, then another $2 per 1000"), usage
-// reporting, and an expiring monthly credit grant.
+// reporting, an expiring monthly credit grant, and quota cancellation (voiding
+// an active credit grant when a customer cancels their quota plan).
 package main
 
 import (
@@ -63,4 +64,12 @@ func main() {
 		log.Fatalf("grant quota: %v", err)
 	}
 	fmt.Println("credit grant:", grant.ID)
+
+	// When the customer cancels their quota plan, void the remaining credit so
+	// it cannot be consumed after they are no longer a paying subscriber.
+	voided, err := client.VoidCreditGrant(ctx, grant.ID)
+	if err != nil {
+		log.Fatalf("void credit grant: %v", err)
+	}
+	fmt.Println("voided credit grant:", voided.ID)
 }

@@ -70,6 +70,7 @@ func main() {
 	platform := stripe.New(
 		os.Getenv("STRIPE_SECRET_KEY"),
 		stripe.WithOAuthClientID(os.Getenv("STRIPE_CONNECT_CLIENT_ID")),
+		stripe.WithOAuthRedirectURI("http://localhost:8080/callback"),
 	)
 
 	// 1. Start the connect flow: redirect the tenant to Stripe.

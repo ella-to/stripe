@@ -34,6 +34,8 @@ type (
 	BillingMeterEvent = sgo.BillingMeterEvent
 	// BillingCreditGrant is a (possibly expiring) credit balance for a customer.
 	BillingCreditGrant = sgo.BillingCreditGrant
+	// Refund is a full or partial reversal of a captured charge.
+	Refund = sgo.Refund
 	// WebhookEndpoint is a registered webhook destination.
 	WebhookEndpoint = sgo.WebhookEndpoint
 	// Event is a webhook event delivered by Stripe.

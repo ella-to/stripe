@@ -16,6 +16,7 @@ func main() {
 	client := stripe.New(
 		os.Getenv("STRIPE_SECRET_KEY"),
 		stripe.WithOAuthClientID(os.Getenv("STRIPE_CONNECT_CLIENT_ID")),
+		stripe.WithOAuthRedirectURI(os.Getenv("STRIPE_OAUTH_REDIRECT_URI")),
 	)
 	ctx := context.Background()
 

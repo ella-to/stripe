@@ -200,6 +200,18 @@ type SetupMeteredQuotaParams struct {
 	Interval         Interval    // defaults to Monthly.
 }
 
+// VoidCreditGrant cancels an active credit grant so the customer can no longer
+// redeem it. Use this when a customer cancels their quota plan mid-cycle and
+// you want to immediately remove any remaining prepaid credit.
+func (c *Client) VoidCreditGrant(ctx context.Context, grantID string) (*BillingCreditGrant, error) {
+	if grantID == "" {
+		return nil, fmt.Errorf("stripe: VoidCreditGrant requires a grantID")
+	}
+	params := &sgo.BillingCreditGrantVoidGrantParams{}
+	c.prep(&params.Params)
+	return c.api.V1BillingCreditGrants.VoidGrant(ctx, grantID, params)
+}
+
 // SetupMeteredQuota creates the meter and the metered/package price together.
 // Subscribe a customer to the returned Price, then call ReportUsage as they
 // consume the resource.

@@ -35,8 +35,9 @@ type Client struct {
 	// Populated when the client authenticates via a Connect OAuth access token
 	// (see NewFromOAuthToken): the account the token represents and the refresh
 	// token, if any.
-	oauthAccountID string
-	oauthRefresh   string
+	oauthAccountID  string
+	oauthRefresh    string
+	oauthRedirectURI string
 }
 
 // Option configures a Client at construction time.
@@ -53,6 +54,13 @@ func WithWebhookSecret(secret string) Option {
 // "ca_"). It is required for ConnectAuthorizeURL.
 func WithOAuthClientID(id string) Option {
 	return func(c *Client) { c.oauthClientID = id }
+}
+
+// WithOAuthRedirectURI sets the redirect URI sent in the OAuth authorization
+// request. It must match one of the URIs registered in your Stripe Connect
+// settings. Required for ConnectAuthorizeURL.
+func WithOAuthRedirectURI(uri string) Option {
+	return func(c *Client) { c.oauthRedirectURI = uri }
 }
 
 // WithStripeClient lets callers inject a fully customised *stripe.Client (for

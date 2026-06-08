@@ -135,10 +135,14 @@ func (c *Client) accountLink(ctx context.Context, accountID, refreshURL, returnU
 // owner to so they can connect their account to your platform via OAuth.
 //
 // state should be an unguessable value you later verify in the callback.
-// Requires WithOAuthClientID to have been set on the client.
+// Requires WithOAuthClientID and WithOAuthRedirectURI to have been set on the
+// client.
 func (c *Client) ConnectAuthorizeURL(state string, scopes ...string) (string, error) {
 	if c.oauthClientID == "" {
 		return "", fmt.Errorf("stripe: ConnectAuthorizeURL requires WithOAuthClientID")
+	}
+	if c.oauthRedirectURI == "" {
+		return "", fmt.Errorf("stripe: ConnectAuthorizeURL requires WithOAuthRedirectURI")
 	}
 	scope := "read_write"
 	if len(scopes) > 0 {
@@ -149,6 +153,7 @@ func (c *Client) ConnectAuthorizeURL(state string, scopes ...string) (string, er
 		State:        String(state),
 		Scope:        String(scope),
 		ResponseType: String("code"),
+		RedirectURI:  String(c.oauthRedirectURI),
 	}
 	oc := oauth.Client{B: sgo.GetBackend(sgo.ConnectBackend), Key: c.apiKey}
 	return oc.AuthorizeURL(params), nil

@@ -1,6 +1,7 @@
 package stripe
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -101,8 +102,10 @@ type Dispatcher struct {
 	mu       sync.RWMutex
 	handlers map[EventType][]rawHandler
 
-	onError func(ev Event, err error)
-	wg      sync.WaitGroup
+	onError    func(ev Event, err error)
+	forwardURL string
+	httpClient *http.Client
+	wg         sync.WaitGroup
 }
 
 // DispatcherOption customises a Dispatcher.
@@ -113,6 +116,22 @@ type DispatcherOption func(*Dispatcher)
 // dropped (the event has already been acknowledged to Stripe).
 func WithErrorHandler(fn func(ev Event, err error)) DispatcherOption {
 	return func(d *Dispatcher) { d.onError = fn }
+}
+
+// WithForwardURL configures the Dispatcher to POST the raw JSON payload of
+// every verified event to targetURL after running local handlers. Use this to
+// relay events to the SASS platform's own webhook endpoint so it receives both
+// the verified raw event and any transformations your handlers apply.
+//
+// The forward is best-effort and fires in the same goroutine pool as handlers;
+// forwarding errors are delivered to the WithErrorHandler callback.
+func WithForwardURL(targetURL string) DispatcherOption {
+	return func(d *Dispatcher) {
+		d.forwardURL = targetURL
+		if d.httpClient == nil {
+			d.httpClient = &http.Client{}
+		}
+	}
 }
 
 // NewDispatcher creates a Dispatcher that verifies payloads with the given
@@ -186,7 +205,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d.Dispatch(r.Context(), event)
+	d.DispatchRaw(r.Context(), event, payload)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -196,9 +215,18 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //
 // The provided context is detached for the handler goroutines (a background
 // context is used) so handlers are not cancelled when the HTTP request returns.
-func (d *Dispatcher) Dispatch(_ context.Context, event Event) {
+func (d *Dispatcher) Dispatch(ctx context.Context, event Event) {
+	d.DispatchRaw(ctx, event, nil)
+}
+
+// DispatchRaw is like Dispatch but also accepts the raw JSON payload so that
+// the WithForwardURL forwarder can relay the original bytes to the SASS
+// platform endpoint unchanged. Pass nil payload when the raw bytes are not
+// available (e.g. when the event came from a queue).
+func (d *Dispatcher) DispatchRaw(_ context.Context, event Event, payload []byte) {
 	d.mu.RLock()
 	handlers := d.handlers[EventType(event.Type)]
+	forwardURL := d.forwardURL
 	d.mu.RUnlock()
 
 	for _, h := range handlers {
@@ -214,6 +242,22 @@ func (d *Dispatcher) Dispatch(_ context.Context, event Event) {
 			if err := h(context.Background(), event); err != nil && d.onError != nil {
 				d.onError(event, err)
 			}
+		}()
+	}
+
+	// Forward the raw payload to the SASS platform endpoint if configured.
+	if forwardURL != "" && len(payload) > 0 {
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			resp, err := d.httpClient.Post(forwardURL, "application/json", bytes.NewReader(payload))
+			if err != nil {
+				if d.onError != nil {
+					d.onError(event, fmt.Errorf("stripe: forward to %s: %w", forwardURL, err))
+				}
+				return
+			}
+			resp.Body.Close()
 		}()
 	}
 }

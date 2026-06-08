@@ -17,11 +17,12 @@ client := stripe.New(os.Getenv("STRIPE_SECRET_KEY"))
 
 | Area | What you get |
 |------|--------------|
+| **Customers** | Create, retrieve, update and delete Stripe customers |
 | **Connect** | Register / update / delete connected accounts, hosted onboarding & update links, connect an existing account via OAuth |
-| **Subscriptions** | Monthly / yearly plans, trials (days or months), plan swaps, cancel now or at period end |
-| **Quota / usage** | Usage meters, package pricing with automatic overage, usage reporting, expiring (monthly) credit grants |
-| **Purchase** | A cart builder with inline or referenced items, automatic or manual tax, flat‑rate shipping, hosted Checkout |
-| **Webhooks** | Create / update / delete endpoints on demand, plus a **generic, type‑safe dispatcher** that validates payloads, casts them to the right Go type and runs handlers in goroutines while acknowledging Stripe instantly |
+| **Subscriptions** | Monthly / yearly plans, trials (days or months), plan swaps, cancel now or at period end, resubscribe, cancel with refund, access timeline, per-plan discount coupons |
+| **Quota / usage** | Usage meters, package pricing with automatic overage, usage reporting, expiring (monthly) credit grants, void (cancel) grants |
+| **Purchase** | A cart builder with inline or referenced items, automatic or manual tax, flat‑rate shipping, hosted Checkout, full and partial refunds |
+| **Webhooks** | Create / update / delete endpoints on demand, a **generic type‑safe dispatcher** that validates payloads, casts them to the right Go type and runs handlers in goroutines while acknowledging Stripe instantly, plus optional forwarding to a SASS platform endpoint |
 | **Platform fees** | Per‑connected‑account application fees (percentage and/or fixed), changeable any time, applied to direct charges, Checkout and subscriptions |
 | **Tax** | Tax rates per jurisdiction, on the platform or on a connected account |
 
@@ -38,6 +39,26 @@ client := stripe.New(os.Getenv("STRIPE_SECRET_KEY"))
 - **Money helpers.** `stripe.Dollars(19.99)` → `1999` (minor units).
 
 ## Quick reference
+
+### Customers
+
+Customers are required before subscribing, charging, or granting quota.
+
+```go
+cus, _ := client.CreateCustomer(ctx, stripe.CreateCustomerParams{
+    Email:    "user@example.com",
+    Name:     "Alice",
+    Metadata: map[string]string{"platform_user_id": "u-42"},
+})
+
+cus, _ = client.GetCustomer(ctx, cus.ID)
+
+cus, _ = client.UpdateCustomer(ctx, cus.ID, stripe.UpdateCustomerParams{
+    Email: "alice.new@example.com",
+})
+
+client.DeleteCustomer(ctx, cus.ID)
+```
 
 ### Connect
 
@@ -56,9 +77,14 @@ upd, _ := client.RequestAccountUpdate(ctx, acct.ID, reauthURL, returnURL)
 _       = client.DeleteConnectedAccount(ctx, acct.ID)
 
 // Connect an existing Stripe account via OAuth:
-authURL, _ := client.ConnectAuthorizeURL("csrf-state")        // step 1: redirect
-token, _   := client.ConnectExistingAccount(ctx, callbackCode) // step 2: callback
-connected  := token.StripeUserID                               // acct_...
+// WithOAuthRedirectURI must match a URI registered in your Stripe Connect settings.
+platform := stripe.New(key,
+    stripe.WithOAuthClientID("ca_..."),
+    stripe.WithOAuthRedirectURI("https://app.example.com/callback"),
+)
+authURL, _ := platform.ConnectAuthorizeURL("csrf-state")       // step 1: redirect
+token, _   := platform.ConnectExistingAccount(ctx, callbackCode) // step 2: callback
+connected  := token.StripeUserID                                // acct_...
 ```
 
 ### Subscriptions
@@ -67,14 +93,41 @@ connected  := token.StripeUserID                               // acct_...
 monthly, _ := client.CreatePlan(ctx, stripe.PlanParams{
     ProductName: "Pro", Amount: stripe.Dollars(20), Interval: stripe.Monthly,
 })
-
-sub, _ := client.Subscribe(ctx, stripe.SubscribeParams{
-    Customer: "cus_123", PriceID: monthly.ID, TrialDays: 14,
+yearly, _ := client.CreatePlan(ctx, stripe.PlanParams{
+    ProductName: "Pro", Amount: stripe.Dollars(200), Interval: stripe.Yearly,
 })
-// 3-month trial: TrialEnd: time.Now().AddDate(0, 3, 0)
 
+// Discount coupon for yearly plans — SASS platform creates and manages these.
+coupon, _ := client.CreateCoupon(ctx, stripe.CouponParams{
+    Name: "Annual Saver", PercentOff: 20, Duration: stripe.CouponOnce,
+})
+client.DeleteCoupon(ctx, coupon.ID) // retire when promotion ends
+
+// Subscribe (with optional trial or coupon).
+sub, _ := client.Subscribe(ctx, stripe.SubscribeParams{
+    Customer: "cus_123", PriceID: monthly.ID,
+    TrialDays: 14,           // or TrialEnd: time.Now().AddDate(0, 3, 0)
+    CouponID:  coupon.ID,    // optional discount
+})
+
+// When does the customer lose access?
+until := stripe.SubscriptionAccessUntil(sub) // handles trialing, cancel-at-period-end, active
+
+// Upgrade monthly → yearly.
 client.SwapPlan(ctx, sub.ID, yearly.ID)
-client.Unsubscribe(ctx, sub.ID, stripe.CancelAtPeriodEnd) // or stripe.CancelImmediately
+
+// Cancel at period end — customer keeps access until the paid period expires.
+cancelled, _ := client.Unsubscribe(ctx, sub.ID, stripe.CancelAtPeriodEnd)
+fmt.Println("access until:", stripe.SubscriptionAccessUntil(cancelled))
+
+// Customer changed their mind — re-enable before the period ends.
+client.Resubscribe(ctx, sub.ID)
+
+// Cancel immediately AND refund the last invoice (money-back guarantee).
+sub, refund, _ := client.UnsubscribeWithRefund(ctx, sub.ID)
+
+// List all subscriptions for a customer.
+subs, _ := client.ListSubscriptions(ctx, "cus_123")
 ```
 
 ### Quota / usage based billing
@@ -99,27 +152,43 @@ automatic. For a **prepaid, monthly‑expiring** quota, grant credit that expire
 and re-grant it each cycle (e.g. from an `invoice.paid` webhook):
 
 ```go
-client.GrantQuota(ctx, stripe.QuotaGrantParams{
+grant, _ := client.GrantQuota(ctx, stripe.QuotaGrantParams{
     Customer:  "cus_123",
     Amount:    stripe.Dollars(2),
     ExpiresIn: 30 * 24 * time.Hour,
     PriceIDs:  []string{plan.Price.ID},
 })
+
+// When the customer cancels, void the remaining credit immediately.
+client.VoidCreditGrant(ctx, grant.ID)
 ```
 
-### Purchase (cart → Checkout)
+### Purchase (cart → Checkout) and Refunds
 
 ```go
 cart := stripe.NewCart("usd").
     AddItem("T-Shirt", stripe.Dollars(25), 2).
     AddItem("Sticker pack", stripe.Dollars(5), 1).
-    WithAutomaticTax().                          // tax added later, at checkout
-    AddShipping("Standard", stripe.Dollars(5))   // shipping added later
+    WithAutomaticTax().
+    AddShipping("Standard", stripe.Dollars(5))
 
 session, _ := client.Checkout(ctx, stripe.CheckoutParams{
     Cart: cart, SuccessURL: successURL, CancelURL: cancelURL,
 })
 // redirect the buyer to session.URL
+
+// Full refund (amount 0 = full refund of the captured payment).
+refund, _ := client.RefundPayment(ctx, stripe.RefundParams{
+    PaymentIntentID: "pi_...",
+    Reason:          stripe.RefundRequestedByCustomer,
+})
+
+// Partial refund.
+refund, _ = client.RefundPayment(ctx, stripe.RefundParams{
+    PaymentIntentID: "pi_...",
+    Amount:          stripe.Dollars(12.50),
+    Reason:          stripe.RefundRequestedByCustomer,
+})
 ```
 
 ### Webhooks
@@ -137,9 +206,13 @@ ep, _ := client.CreateWebhookEndpoint(ctx, stripe.WebhookEndpointParams{
 })
 // store ep.Secret
 
-d := client.Webhooks(stripe.WithErrorHandler(func(ev stripe.Event, err error) {
-    log.Printf("handler error for %s: %v", ev.Type, err)
-}))
+d := client.Webhooks(
+    stripe.WithErrorHandler(func(ev stripe.Event, err error) {
+        log.Printf("handler error for %s: %v", ev.Type, err)
+    }),
+    // Forward the verified raw payload to the SASS platform's own endpoint.
+    stripe.WithForwardURL("https://saas-platform.example.com/stripe/events"),
+)
 
 stripe.On(d, stripe.EventInvoicePaid, func(ctx context.Context, ev stripe.Event, inv *stripe.Invoice) error {
     log.Printf("invoice %s paid: %d", inv.ID, inv.AmountPaid)
@@ -152,6 +225,10 @@ http.Handle("/stripe/webhook", d) // d implements http.Handler
 `stripe.On[T]` is a package‑level function (Go methods can't take type
 parameters). The event JSON is validated by decoding it into `*T`; on mismatch
 the error handler fires and the typed handler is skipped.
+
+`WithForwardURL` is useful when LiteScale acts as an intermediary: it registers
+its own webhook with Stripe, processes events, and relays the original raw
+payload to the SASS platform's configured endpoint.
 
 ### Platform fees (SaaS revenue share)
 
@@ -220,7 +297,7 @@ client := stripe.New(key, stripe.WithFeeResolver(stripe.FeeResolverFunc(
     func(ctx context.Context, accountID string) (stripe.PlatformFee, bool, error) {
         row, ok := db.LookupFee(ctx, accountID) // your storage
         if !ok {
-            return stripe.PlatformFee{}, false, nil // no fee configured
+            return stripe.PlatformFee{}, false, nil
         }
         return stripe.PlatformFee{Percent: row.Percent, Fixed: row.Fixed}, true, nil
     },
@@ -234,8 +311,14 @@ account via Connect **OAuth**. The token exchange returns an `access_token` that
 is itself a usable API key, so the whole SDK can operate *as* that tenant. Your
 meta-platform only needs its own secret key for the one-time handshake.
 
+`WithOAuthRedirectURI` is required and must match a URI registered in your
+Stripe Connect settings.
+
 ```go
-platform := stripe.New(key, stripe.WithOAuthClientID("ca_..."))
+platform := stripe.New(key,
+    stripe.WithOAuthClientID("ca_..."),
+    stripe.WithOAuthRedirectURI("https://app.example.com/callback"),
+)
 
 // 1. Redirect the tenant to Stripe.
 url, _ := platform.ConnectAuthorizeURL("state")
@@ -277,17 +360,33 @@ client.CreateTaxRateForAccount(ctx, "acct_123", stripe.TaxRateParams{
 
 Runnable programs live in [`examples/`](./examples):
 
-- `examples/connect` — connected accounts + OAuth
-- `examples/subscriptions` — plans, trials, cancellation
-- `examples/quota` — metered/package pricing and credit grants
-- `examples/purchase` — cart, tax, shipping, Checkout
-- `examples/webhook` — endpoint management + typed dispatcher HTTP server
-- `examples/platformfee` — per‑account platform fees on direct charges
-- `examples/oauthsaas` — multi‑tenant OAuth onboarding + per‑tenant fees
-- `examples/tax` — jurisdiction tax rates
+| Example | What it covers |
+|---------|---------------|
+| `examples/customers` | Customer lifecycle: create, get, update, delete |
+| `examples/connect` | Connected accounts + OAuth onboarding |
+| `examples/subscriptions` | Plans, trials, coupons, access timeline, resubscribe, cancel with refund |
+| `examples/quota` | Metered/package pricing, credit grants, void (cancel) grants |
+| `examples/purchase` | Cart, tax, shipping, Checkout |
+| `examples/refund` | One-off refunds (full and partial) + subscription cancel-with-refund |
+| `examples/webhook` | Endpoint management + typed dispatcher HTTP server + forwarding |
+| `examples/platformfee` | Per‑account platform fees on direct charges |
+| `examples/oauthsaas` | Multi‑tenant OAuth onboarding + per‑tenant fees |
+| `examples/tax` | Jurisdiction tax rates |
 
-All read `STRIPE_SECRET_KEY` (and a few feature‑specific env vars) from the
-environment.
+All examples read `STRIPE_SECRET_KEY` (and a few feature-specific env vars)
+from the environment.
+
+## Environment variables
+
+| Variable | Used by |
+|----------|---------|
+| `STRIPE_SECRET_KEY` | All examples |
+| `STRIPE_CONNECT_CLIENT_ID` | `connect`, `oauthsaas` — the `ca_...` client id |
+| `STRIPE_OAUTH_REDIRECT_URI` | `connect` — must match your Stripe Connect settings |
+| `STRIPE_WEBHOOK_SECRET` | `webhook` — the `whsec_...` signing secret |
+| `STRIPE_CUSTOMER_ID` | `subscriptions`, `quota`, `refund` |
+| `STRIPE_STORE_ACCOUNT_ID` | `refund` — connected account to charge |
+| `STRIPE_PAYMENT_INTENT_ID` | `refund` — optional, to demonstrate a refund |
 
 ## Testing
 

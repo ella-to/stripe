@@ -7,6 +7,48 @@ import (
 	sgo "github.com/stripe/stripe-go/v85"
 )
 
+// RefundReason is the reason code for a refund, as required by Stripe.
+type RefundReason string
+
+const (
+	RefundDuplicate          RefundReason = "duplicate"
+	RefundFraudulent         RefundReason = "fraudulent"
+	RefundRequestedByCustomer RefundReason = "requested_by_customer"
+)
+
+// RefundParams describes a full or partial refund of a captured payment.
+type RefundParams struct {
+	// PaymentIntentID is the payment intent to refund (pi_...). Required.
+	PaymentIntentID string
+	// Amount is the amount to refund in minor units. Zero means a full refund.
+	Amount int64
+	Reason RefundReason
+	Metadata map[string]string
+}
+
+// RefundPayment issues a full or partial refund against a PaymentIntent. The
+// returned Refund includes its status; "succeeded" means the money is on its
+// way back to the customer.
+func (c *Client) RefundPayment(ctx context.Context, p RefundParams) (*Refund, error) {
+	if p.PaymentIntentID == "" {
+		return nil, fmt.Errorf("stripe: RefundPayment requires a PaymentIntentID")
+	}
+	params := &sgo.RefundCreateParams{
+		PaymentIntent: String(p.PaymentIntentID),
+	}
+	if p.Amount > 0 {
+		params.Amount = Int64(p.Amount)
+	}
+	if p.Reason != "" {
+		params.Reason = String(string(p.Reason))
+	}
+	for k, v := range p.Metadata {
+		params.AddMetadata(k, v)
+	}
+	c.prep(&params.Params)
+	return c.api.V1Refunds.Create(ctx, params)
+}
+
 // CartItem is a single line on a purchase. Provide either PriceID (to reference
 // an existing Stripe price) or Name+Amount (to define the price inline).
 type CartItem struct {

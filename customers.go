@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	sgo "github.com/stripe/stripe-go/v85"
+	sgo "github.com/stripe/stripe-go/v86"
 )
 
 // CreateCustomerParams describes a new customer to register on the platform (or

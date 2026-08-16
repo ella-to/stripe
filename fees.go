@@ -6,7 +6,7 @@ import (
 	"math"
 	"strconv"
 
-	sgo "github.com/stripe/stripe-go/v85"
+	sgo "github.com/stripe/stripe-go/v86"
 )
 
 // Metadata keys used to persist a connected account's platform fee on the

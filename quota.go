@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	sgo "github.com/stripe/stripe-go/v85"
+	sgo "github.com/stripe/stripe-go/v86"
 )
 
 // Aggregation describes how raw usage events are rolled up by a meter.

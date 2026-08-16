@@ -1,6 +1,6 @@
 package stripe
 
-import sgo "github.com/stripe/stripe-go/v85"
+import sgo "github.com/stripe/stripe-go/v86"
 
 // Re-exported stripe-go types. Aliasing them here means callers can depend on a
 // single import (this package) for both the high level helpers and the rich

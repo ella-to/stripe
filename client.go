@@ -1,5 +1,5 @@
 // Package stripe is a thin, opinionated wrapper around the official stripe-go
-// SDK (github.com/stripe/stripe-go/v85). It collapses the most common Stripe
+// SDK (github.com/stripe/stripe-go/v86). It collapses the most common Stripe
 // integration patterns - Connect onboarding, subscriptions, usage based
 // quotas, one-off purchases, webhooks and tax - into a small, task oriented
 // API so that the caller does not have to assemble low level parameter structs
@@ -14,7 +14,7 @@ package stripe
 import (
 	"math"
 
-	sgo "github.com/stripe/stripe-go/v85"
+	sgo "github.com/stripe/stripe-go/v86"
 )
 
 // Client is the entry point for every feature in this package. It wraps a
@@ -35,8 +35,8 @@ type Client struct {
 	// Populated when the client authenticates via a Connect OAuth access token
 	// (see NewFromOAuthToken): the account the token represents and the refresh
 	// token, if any.
-	oauthAccountID  string
-	oauthRefresh    string
+	oauthAccountID   string
+	oauthRefresh     string
 	oauthRedirectURI string
 }
 

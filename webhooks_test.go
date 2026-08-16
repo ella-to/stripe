@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	sgo "github.com/stripe/stripe-go/v85"
-	"github.com/stripe/stripe-go/v85/webhook"
+	sgo "github.com/stripe/stripe-go/v86"
+	"github.com/stripe/stripe-go/v86/webhook"
 )
 
 // TestDispatcherTypedHandler verifies the generic dispatcher: a signed payload

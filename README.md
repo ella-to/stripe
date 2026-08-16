@@ -1,7 +1,7 @@
 # stripe — a simpler Stripe SDK for Go
 
 A thin, opinionated wrapper around the official [`stripe-go`](https://github.com/stripe/stripe-go)
-SDK (v85). Stripe is powerful but its API surface is large and the common
+SDK (v86). Stripe is powerful but its API surface is large and the common
 patterns take a lot of boilerplate to assemble. This package collapses those
 patterns into small, task‑oriented calls — while still returning the **real**
 stripe-go resource types, so you can always drop down to the full SDK when you
@@ -78,16 +78,16 @@ example for the full multi-tenant flow.
 
 ## Features
 
-| Area | What you get |
-|------|--------------|
-| **Customers** | Create, retrieve, update and delete Stripe customers |
-| **Connect** | Register / update / delete connected accounts, hosted onboarding & update links, connect an existing account via OAuth |
-| **Subscriptions** | Monthly / yearly plans, trials (days or months), plan swaps, cancel now or at period end, resubscribe, cancel with refund, access timeline, per-plan discount coupons |
-| **Quota / usage** | Usage meters, package pricing with automatic overage, usage reporting, expiring (monthly) credit grants, void (cancel) grants |
-| **Purchase** | A cart builder with inline or referenced items, automatic or manual tax, flat‑rate shipping, hosted Checkout, full and partial refunds |
-| **Webhooks** | Create / update / delete endpoints on demand, a **generic type‑safe dispatcher** that validates payloads, casts them to the right Go type and runs handlers in goroutines while acknowledging Stripe instantly, plus optional forwarding to a SASS platform endpoint |
-| **Platform fees** | Per‑connected‑account application fees (percentage and/or fixed), changeable any time, applied to direct charges, Checkout and subscriptions |
-| **Tax** | Tax rates per jurisdiction, on the platform or on a connected account |
+| Area              | What you get                                                                                                                                                                                                                                                         |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Customers**     | Create, retrieve, update and delete Stripe customers                                                                                                                                                                                                                 |
+| **Connect**       | Register / update / delete connected accounts, hosted onboarding & update links, connect an existing account via OAuth                                                                                                                                               |
+| **Subscriptions** | Monthly / yearly plans, trials (days or months), plan swaps, cancel now or at period end, resubscribe, cancel with refund, access timeline, per-plan discount coupons                                                                                                |
+| **Quota / usage** | Usage meters, package pricing with automatic overage, usage reporting, expiring (monthly) credit grants, void (cancel) grants                                                                                                                                        |
+| **Purchase**      | A cart builder with inline or referenced items, automatic or manual tax, flat‑rate shipping, hosted Checkout, full and partial refunds                                                                                                                               |
+| **Webhooks**      | Create / update / delete endpoints on demand, a **generic type‑safe dispatcher** that validates payloads, casts them to the right Go type and runs handlers in goroutines while acknowledging Stripe instantly, plus optional forwarding to a SASS platform endpoint |
+| **Platform fees** | Per‑connected‑account application fees (percentage and/or fixed), changeable any time, applied to direct charges, Checkout and subscriptions                                                                                                                         |
+| **Tax**           | Tax rates per jurisdiction, on the platform or on a connected account                                                                                                                                                                                                |
 
 ## Design
 
@@ -152,7 +152,7 @@ connected  := token.StripeUserID                                // acct_...
 
 ### Subscriptions
 
-```go
+````go
 monthly, _ := client.CreatePlan(ctx, stripe.PlanParams{
     ProductName: "Pro", Amount: stripe.Dollars(20), Interval: stripe.Monthly,
 })
@@ -180,7 +180,7 @@ until := stripe.SubscriptionAccessUntil(sub) // handles trialing, cancel-at-peri
 client.SwapPlan(ctx, sub.ID, yearly.ID)
 
 // Cancel at period end — customer keeps access until the paid period expires.
- 
+
 
 ### Quota / usage based billing
 
@@ -197,7 +197,7 @@ plan, _ := client.SetupMeteredQuota(ctx, stripe.SetupMeteredQuotaParams{
 
 client.Subscribe(ctx, stripe.SubscribeParams{Customer: "cus_123", PriceID: plan.Price.ID})
 client.ReportUsage(ctx, "cus_123", "api_request", 1500) // charged $4 (2 packages)
-```
+````
 
 The charge is `ceil(usage / PackageSize) * AmountPerPackage`, so overage is
 automatic. For a **prepaid, monthly‑expiring** quota, grant credit that expires
@@ -360,7 +360,7 @@ client := stripe.New(key, stripe.WithFeeResolver(stripe.FeeResolverFunc(
 
 Instead of holding each tenant's secret key, let tenants connect their Stripe
 account via Connect **OAuth**. The token exchange returns an `access_token` that
-is itself a usable API key, so the whole SDK can operate *as* that tenant. Your
+is itself a usable API key, so the whole SDK can operate _as_ that tenant. Your
 meta-platform only needs its own secret key for the one-time handshake.
 
 `WithOAuthRedirectURI` is required and must match a URI registered in your
@@ -412,36 +412,36 @@ client.CreateTaxRateForAccount(ctx, "acct_123", stripe.TaxRateParams{
 
 Runnable programs live in [`examples/`](./examples):
 
-| Example | What it covers |
-|---------|---------------|
-| `examples/saas` | **Start here for direct SaaS billing** — customer, subscription, quota, purchase, refund; both secret key and OAuth token auth |
-| `examples/customers` | Customer lifecycle: create, get, update, delete |
-| `examples/connect` | Connected accounts + OAuth onboarding |
-| `examples/subscriptions` | Plans, trials, coupons, access timeline, resubscribe, cancel with refund |
-| `examples/quota` | Metered/package pricing, credit grants, void (cancel) grants |
-| `examples/purchase` | Cart, tax, shipping, Checkout |
-| `examples/refund` | One-off refunds (full and partial) + subscription cancel-with-refund |
-| `examples/webhook` | Endpoint management + typed dispatcher HTTP server + forwarding |
-| `examples/platformfee` | Per‑account platform fees on direct charges |
-| `examples/oauthsaas` | Multi‑tenant OAuth onboarding + per‑tenant fees |
-| `examples/tax` | Jurisdiction tax rates |
+| Example                  | What it covers                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `examples/saas`          | **Start here for direct SaaS billing** — customer, subscription, quota, purchase, refund; both secret key and OAuth token auth |
+| `examples/customers`     | Customer lifecycle: create, get, update, delete                                                                                |
+| `examples/connect`       | Connected accounts + OAuth onboarding                                                                                          |
+| `examples/subscriptions` | Plans, trials, coupons, access timeline, resubscribe, cancel with refund                                                       |
+| `examples/quota`         | Metered/package pricing, credit grants, void (cancel) grants                                                                   |
+| `examples/purchase`      | Cart, tax, shipping, Checkout                                                                                                  |
+| `examples/refund`        | One-off refunds (full and partial) + subscription cancel-with-refund                                                           |
+| `examples/webhook`       | Endpoint management + typed dispatcher HTTP server + forwarding                                                                |
+| `examples/platformfee`   | Per‑account platform fees on direct charges                                                                                    |
+| `examples/oauthsaas`     | Multi‑tenant OAuth onboarding + per‑tenant fees                                                                                |
+| `examples/tax`           | Jurisdiction tax rates                                                                                                         |
 
 All examples read `STRIPE_SECRET_KEY` (and a few feature-specific env vars)
 from the environment.
 
 ## Environment variables
 
-| Variable | Used by |
-|----------|---------|
-| `STRIPE_SECRET_KEY` | All examples (Option A auth) |
-| `STRIPE_ACCESS_TOKEN` | `saas` — OAuth access token (Option B auth) |
-| `STRIPE_ACCOUNT_ID` | `saas` — Stripe user ID paired with `STRIPE_ACCESS_TOKEN` |
-| `STRIPE_CONNECT_CLIENT_ID` | `connect`, `oauthsaas` — the `ca_...` client id |
-| `STRIPE_OAUTH_REDIRECT_URI` | `connect` — must match your Stripe Connect settings |
-| `STRIPE_WEBHOOK_SECRET` | `webhook` — the `whsec_...` signing secret |
-| `STRIPE_CUSTOMER_ID` | `saas`, `subscriptions`, `quota`, `refund` — skip customer creation if set |
-| `STRIPE_STORE_ACCOUNT_ID` | `refund` — connected account to charge |
-| `STRIPE_PAYMENT_INTENT_ID` | `saas`, `refund` — optional, to demonstrate a standalone refund |
+| Variable                    | Used by                                                                    |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `STRIPE_SECRET_KEY`         | All examples (Option A auth)                                               |
+| `STRIPE_ACCESS_TOKEN`       | `saas` — OAuth access token (Option B auth)                                |
+| `STRIPE_ACCOUNT_ID`         | `saas` — Stripe user ID paired with `STRIPE_ACCESS_TOKEN`                  |
+| `STRIPE_CONNECT_CLIENT_ID`  | `connect`, `oauthsaas` — the `ca_...` client id                            |
+| `STRIPE_OAUTH_REDIRECT_URI` | `connect` — must match your Stripe Connect settings                        |
+| `STRIPE_WEBHOOK_SECRET`     | `webhook` — the `whsec_...` signing secret                                 |
+| `STRIPE_CUSTOMER_ID`        | `saas`, `subscriptions`, `quota`, `refund` — skip customer creation if set |
+| `STRIPE_STORE_ACCOUNT_ID`   | `refund` — connected account to charge                                     |
+| `STRIPE_PAYMENT_INTENT_ID`  | `saas`, `refund` — optional, to demonstrate a standalone refund            |
 
 ## Testing
 
@@ -455,4 +455,4 @@ Stripe's test helper and asserts the typed handler receives the decoded object.
 ## Requirements
 
 - Go 1.23+ (uses range‑over‑func for list iteration; module targets 1.25)
-- `github.com/stripe/stripe-go/v85`
+- `github.com/stripe/stripe-go/v86`

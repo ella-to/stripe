@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 
-	sgo "github.com/stripe/stripe-go/v85"
+	sgo "github.com/stripe/stripe-go/v86"
 )
 
 // RefundReason is the reason code for a refund, as required by Stripe.
 type RefundReason string
 
 const (
-	RefundDuplicate          RefundReason = "duplicate"
-	RefundFraudulent         RefundReason = "fraudulent"
+	RefundDuplicate           RefundReason = "duplicate"
+	RefundFraudulent          RefundReason = "fraudulent"
 	RefundRequestedByCustomer RefundReason = "requested_by_customer"
 )
 
@@ -21,8 +21,8 @@ type RefundParams struct {
 	// PaymentIntentID is the payment intent to refund (pi_...). Required.
 	PaymentIntentID string
 	// Amount is the amount to refund in minor units. Zero means a full refund.
-	Amount int64
-	Reason RefundReason
+	Amount   int64
+	Reason   RefundReason
 	Metadata map[string]string
 }
 

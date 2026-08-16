@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"sync"
 
-	sgo "github.com/stripe/stripe-go/v85"
-	"github.com/stripe/stripe-go/v85/webhook"
+	sgo "github.com/stripe/stripe-go/v86"
+	"github.com/stripe/stripe-go/v86/webhook"
 )
 
 // maxWebhookBody caps how much of the request body we read. Stripe payloads are

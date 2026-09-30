@@ -5,8 +5,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"ella.to/stripe"
@@ -16,37 +15,42 @@ func main() {
 	client := stripe.New(os.Getenv("STRIPE_SECRET_KEY"))
 	ctx := context.Background()
 
-	// Create an end user (the person who rents equipment on the SASS platform).
+	// Create a customer when a user signs up. Store cus.ID on your user record.
 	cus, err := client.CreateCustomer(ctx, stripe.CreateCustomerParams{
 		Email:       "renter@example.com",
 		Name:        "Alice Renter",
-		Description: "Equipment renter via RentEasy platform",
+		Description: "Signed up via the web app",
 		Metadata:    map[string]string{"platform_user_id": "user-42"},
 	})
 	if err != nil {
-		log.Fatalf("create customer: %v", err)
+		fatal("create customer", "err", err)
 	}
-	fmt.Println("created customer:", cus.ID)
+	slog.Info("created customer", "id", cus.ID)
 
 	// Retrieve the customer later (e.g. from a webhook handler).
 	fetched, err := client.GetCustomer(ctx, cus.ID)
 	if err != nil {
-		log.Fatalf("get customer: %v", err)
+		fatal("get customer", "err", err)
 	}
-	fmt.Println("fetched:", fetched.Email)
+	slog.Info("fetched customer", "email", fetched.Email)
 
-	// Update the customer's email when they change it in the SASS platform.
+	// Keep Stripe in sync when the user changes their email in your app.
 	updated, err := client.UpdateCustomer(ctx, cus.ID, stripe.UpdateCustomerParams{
 		Email: "alice.new@example.com",
 	})
 	if err != nil {
-		log.Fatalf("update customer: %v", err)
+		fatal("update customer", "err", err)
 	}
-	fmt.Println("updated email:", updated.Email)
+	slog.Info("updated customer", "email", updated.Email)
 
 	// When a user closes their account, delete them from Stripe.
 	if err := client.DeleteCustomer(ctx, cus.ID); err != nil {
-		log.Fatalf("delete customer: %v", err)
+		fatal("delete customer", "err", err)
 	}
-	fmt.Println("customer deleted:", cus.ID)
+	slog.Info("deleted customer", "id", cus.ID)
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

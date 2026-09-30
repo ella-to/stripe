@@ -70,6 +70,32 @@ func (c *Client) RegisterConnectedAccount(ctx context.Context, p ConnectedAccoun
 	return c.api.V1Accounts.Create(ctx, params)
 }
 
+// GetConnectedAccount retrieves a connected account. Check AccountReady (or
+// Account.Requirements) after the seller returns from onboarding.
+func (c *Client) GetConnectedAccount(ctx context.Context, accountID string) (*Account, error) {
+	if accountID == "" {
+		return nil, fmt.Errorf("stripe: GetConnectedAccount requires an accountID")
+	}
+	return c.api.V1Accounts.GetByID(ctx, accountID, nil)
+}
+
+// AccountReady reports whether a connected account has finished onboarding
+// and can accept payments. Until it is ready, Checkout/charges on the account
+// fail; send the seller back through AccountOnboardingLink.
+func AccountReady(acct *Account) bool {
+	return acct != nil && acct.DetailsSubmitted && acct.ChargesEnabled
+}
+
+// ExpressDashboardLink returns a single-use link that logs an Express account
+// holder into their Stripe dashboard, where they can see payouts and balances.
+// Only available for Express accounts that finished onboarding.
+func (c *Client) ExpressDashboardLink(ctx context.Context, accountID string) (*LoginLink, error) {
+	if accountID == "" {
+		return nil, fmt.Errorf("stripe: ExpressDashboardLink requires an accountID")
+	}
+	return c.api.V1LoginLinks.Create(ctx, &sgo.LoginLinkCreateParams{Account: String(accountID)})
+}
+
 // DeleteConnectedAccount permanently deletes a connected account. This only
 // works for accounts the platform controls (Express/Custom) or test accounts.
 func (c *Client) DeleteConnectedAccount(ctx context.Context, accountID string) error {

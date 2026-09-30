@@ -25,7 +25,15 @@ const (
 // PlanParams describes a recurring plan. CreatePlan turns it into a Stripe
 // Product + recurring Price in a single call.
 type PlanParams struct {
-	ProductName   string
+	ProductName string
+	// ProductID attaches the price to an existing product instead of creating
+	// a new one (ProductName is then ignored). Use it to offer monthly and
+	// yearly prices for the same product.
+	ProductID string
+	// LookupKey is a stable name for the price, e.g. "pro_monthly". It lets
+	// you find the price again with FindPrice / EnsurePlan instead of storing
+	// its id. Must be unique per account.
+	LookupKey     string
 	Amount        int64    // Price per interval in minor units (use Dollars).
 	Currency      string   // Defaults to "usd".
 	Interval      Interval // Monthly or Yearly, etc.
@@ -59,15 +67,61 @@ func (c *Client) CreatePlan(ctx context.Context, p PlanParams) (*Price, error) {
 		Currency:   String(p.Currency),
 		UnitAmount: Int64(p.Amount),
 		Recurring:  recurring,
-		ProductData: &sgo.PriceCreateProductDataParams{
-			Name: String(p.ProductName),
-		},
+	}
+	if p.ProductID != "" {
+		params.Product = String(p.ProductID)
+	} else {
+		params.ProductData = &sgo.PriceCreateProductDataParams{Name: String(p.ProductName)}
+	}
+	if p.LookupKey != "" {
+		params.LookupKey = String(p.LookupKey)
 	}
 	for k, v := range p.Metadata {
 		params.AddMetadata(k, v)
 	}
 	c.prep(&params.Params)
 	return c.api.V1Prices.Create(ctx, params)
+}
+
+// FindPrice returns the active price with the given lookup key. found is false
+// when no such price exists.
+func (c *Client) FindPrice(ctx context.Context, lookupKey string) (price *Price, found bool, err error) {
+	if lookupKey == "" {
+		return nil, false, fmt.Errorf("stripe: FindPrice requires a lookupKey")
+	}
+	params := &sgo.PriceListParams{
+		LookupKeys: stringSlice([]string{lookupKey}),
+		Active:     Bool(true),
+	}
+	params.AddExpand("data.product")
+	c.prepList(&params.ListParams)
+	for price, err := range c.api.V1Prices.List(ctx, params).All(ctx) {
+		if err != nil {
+			return nil, false, err
+		}
+		return price, true, nil
+	}
+	return nil, false, nil
+}
+
+// EnsurePlan returns the price with p.LookupKey, creating it with CreatePlan
+// when it does not exist yet. It makes setup code safe to run on every start:
+//
+//	monthly, _ := client.EnsurePlan(ctx, stripe.PlanParams{
+//	    LookupKey: "pro_monthly", ProductName: "Pro",
+//	    Amount: stripe.Dollars(20), Interval: stripe.Monthly,
+//	})
+//
+// An existing price is returned as-is, even if its amount differs from p.
+func (c *Client) EnsurePlan(ctx context.Context, p PlanParams) (*Price, error) {
+	if p.LookupKey == "" {
+		return nil, fmt.Errorf("stripe: EnsurePlan requires a LookupKey")
+	}
+	price, found, err := c.FindPrice(ctx, p.LookupKey)
+	if err != nil || found {
+		return price, err
+	}
+	return c.CreatePlan(ctx, p)
 }
 
 // SubscribeParams describes a new subscription for an existing customer.
@@ -134,16 +188,9 @@ func (c *Client) Subscribe(ctx context.Context, p SubscribeParams) (*Subscriptio
 	eff := c
 	if p.ConnectedAccount != "" {
 		eff = c.ForAccount(p.ConnectedAccount)
-
-		feePercent := p.FeePercent
-		if feePercent == 0 {
-			fee, ok, err := c.GetPlatformFee(ctx, p.ConnectedAccount)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				feePercent = fee.Percent
-			}
+		feePercent, err := c.resolveFeePercent(ctx, p.ConnectedAccount, p.FeePercent)
+		if err != nil {
+			return nil, err
 		}
 		if feePercent > 0 {
 			params.ApplicationFeePercent = Float64(feePercent)
@@ -152,6 +199,138 @@ func (c *Client) Subscribe(ctx context.Context, p SubscribeParams) (*Subscriptio
 
 	eff.prep(&params.Params)
 	return eff.api.V1Subscriptions.Create(ctx, params)
+}
+
+// resolveFeePercent returns explicit when non-zero, otherwise the percentage
+// configured for accountID via the FeeResolver (zero when none).
+func (c *Client) resolveFeePercent(ctx context.Context, accountID string, explicit float64) (float64, error) {
+	if explicit != 0 {
+		return explicit, nil
+	}
+	fee, ok, err := c.GetPlatformFee(ctx, accountID)
+	if err != nil || !ok {
+		return 0, err
+	}
+	return fee.Percent, nil
+}
+
+// SubscriptionCheckoutParams configures a hosted Checkout page that starts a
+// subscription. This is the easiest way to sign customers up: Stripe collects
+// the card, handles 3-D Secure and creates the subscription for you.
+type SubscriptionCheckoutParams struct {
+	PriceID  string // recurring price id ("price_...") - required.
+	Quantity int64  // defaults to 1 (e.g. number of seats).
+	// MeteredPriceIDs adds usage based prices (see SetupMeteredQuota) to the
+	// same subscription, e.g. a base fee plus overage.
+	MeteredPriceIDs []string
+
+	SuccessURL string // add ?session_id={CHECKOUT_SESSION_ID} to read the result.
+	CancelURL  string
+
+	Customer          string // existing customer id; recommended for logged in users.
+	CustomerEmail     string // prefill for new customers. Ignored when Customer is set.
+	ClientReferenceID string // your user id, echoed back on the session.
+
+	// TrialDays starts the subscription with a free trial.
+	TrialDays int64
+	// TrialWithoutCard lets customers start the trial without entering a card.
+	// If no card has been added when the trial ends, the subscription is
+	// cancelled. Requires TrialDays.
+	TrialWithoutCard bool
+
+	CouponID            string // apply a coupon up front.
+	AllowPromotionCodes bool   // or let the customer type a promotion code.
+	AutomaticTax        bool   // calculate tax with Stripe Tax.
+
+	// Metadata is stored on both the Checkout session and the subscription, so
+	// subscription webhooks can find your user too.
+	Metadata map[string]string
+
+	// ConnectedAccount creates the subscription on a connected account, and
+	// FeePercent (or the account's stored fee) is taken from every invoice.
+	ConnectedAccount string
+	FeePercent       float64
+}
+
+// CheckoutSubscription creates a hosted Checkout session in subscription
+// mode. Redirect the customer to CheckoutSession.URL. The subscription itself
+// is created by Stripe when the customer pays; listen for
+// checkout.session.completed and customer.subscription.* webhooks to update
+// your database.
+func (c *Client) CheckoutSubscription(ctx context.Context, p SubscriptionCheckoutParams) (*CheckoutSession, error) {
+	if p.PriceID == "" {
+		return nil, fmt.Errorf("stripe: CheckoutSubscription requires a PriceID")
+	}
+	if p.SuccessURL == "" || p.CancelURL == "" {
+		return nil, fmt.Errorf("stripe: CheckoutSubscription requires SuccessURL and CancelURL")
+	}
+	if p.AllowPromotionCodes && p.CouponID != "" {
+		return nil, fmt.Errorf("stripe: CheckoutSubscription accepts AllowPromotionCodes or CouponID, not both")
+	}
+	if p.TrialWithoutCard && p.TrialDays <= 0 {
+		return nil, fmt.Errorf("stripe: CheckoutSubscription TrialWithoutCard requires TrialDays")
+	}
+	qty := p.Quantity
+	if qty == 0 {
+		qty = 1
+	}
+
+	params := &sgo.CheckoutSessionCreateParams{
+		Mode:       String("subscription"),
+		SuccessURL: String(p.SuccessURL),
+		CancelURL:  String(p.CancelURL),
+		LineItems: []*sgo.CheckoutSessionCreateLineItemParams{
+			{Price: String(p.PriceID), Quantity: Int64(qty)},
+		},
+		SubscriptionData: &sgo.CheckoutSessionCreateSubscriptionDataParams{},
+	}
+	// Metered prices are billed on reported usage, so Stripe rejects a quantity.
+	for _, id := range p.MeteredPriceIDs {
+		params.LineItems = append(params.LineItems, &sgo.CheckoutSessionCreateLineItemParams{Price: String(id)})
+	}
+	applyCheckoutCustomer(params, p.Customer, p.CustomerEmail, p.AutomaticTax, false)
+	if p.ClientReferenceID != "" {
+		params.ClientReferenceID = String(p.ClientReferenceID)
+	}
+	if p.TrialDays > 0 {
+		params.SubscriptionData.TrialPeriodDays = Int64(p.TrialDays)
+	}
+	if p.TrialWithoutCard {
+		params.PaymentMethodCollection = String("if_required")
+		params.SubscriptionData.TrialSettings = &sgo.CheckoutSessionCreateSubscriptionDataTrialSettingsParams{
+			EndBehavior: &sgo.CheckoutSessionCreateSubscriptionDataTrialSettingsEndBehaviorParams{
+				MissingPaymentMethod: String("cancel"),
+			},
+		}
+	}
+	if p.CouponID != "" {
+		params.Discounts = []*sgo.CheckoutSessionCreateDiscountParams{{Coupon: String(p.CouponID)}}
+	}
+	if p.AllowPromotionCodes {
+		params.AllowPromotionCodes = Bool(true)
+	}
+	if p.AutomaticTax {
+		params.AutomaticTax = &sgo.CheckoutSessionCreateAutomaticTaxParams{Enabled: Bool(true)}
+	}
+	for k, v := range p.Metadata {
+		params.AddMetadata(k, v)
+		params.SubscriptionData.AddMetadata(k, v)
+	}
+
+	eff := c
+	if p.ConnectedAccount != "" {
+		eff = c.ForAccount(p.ConnectedAccount)
+		feePercent, err := c.resolveFeePercent(ctx, p.ConnectedAccount, p.FeePercent)
+		if err != nil {
+			return nil, err
+		}
+		if feePercent > 0 {
+			params.SubscriptionData.ApplicationFeePercent = Float64(feePercent)
+		}
+	}
+
+	eff.prep(&params.Params)
+	return eff.api.V1CheckoutSessions.Create(ctx, params)
 }
 
 // CancelMode controls how a subscription is terminated.
@@ -166,6 +345,8 @@ const (
 )
 
 // Unsubscribe cancels a subscription either immediately or at period end.
+// With CancelAtPeriodEnd the subscription stays active (and HasAccess true)
+// until the period ends; undo it with Resubscribe.
 func (c *Client) Unsubscribe(ctx context.Context, subscriptionID string, mode CancelMode) (*Subscription, error) {
 	if mode == CancelAtPeriodEnd {
 		params := &sgo.SubscriptionUpdateParams{
@@ -237,7 +418,7 @@ func (c *Client) Resubscribe(ctx context.Context, subscriptionID string) (*Subsc
 }
 
 // UnsubscribeWithRefund cancels the subscription immediately and issues a full
-// refund of the most recent invoice's payment. Use this for "cancel and refund"
+// (not prorated) refund of the most recent invoice's payment. Use this for "cancel and refund"
 // flows (e.g. within a money-back guarantee window).
 //
 // The returned Refund is nil when the latest invoice has no captured payment
@@ -308,6 +489,30 @@ func SubscriptionAccessUntil(sub *Subscription) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// HasAccess reports whether the customer should currently get the features of
+// this subscription: it is active or trialing. A subscription scheduled to
+// cancel at period end stays active until then. past_due (a renewal payment
+// failed and Stripe is retrying) is treated as no access; check sub.Status
+// yourself if you want a grace period.
+func HasAccess(sub *Subscription) bool {
+	if sub == nil {
+		return false
+	}
+	return sub.Status == sgo.SubscriptionStatusActive || sub.Status == sgo.SubscriptionStatusTrialing
+}
+
+// UpcomingInvoice previews the next invoice of a subscription: what the
+// customer will be charged at renewal, including metered usage reported so
+// far and any proration from plan changes.
+func (c *Client) UpcomingInvoice(ctx context.Context, subscriptionID string) (*Invoice, error) {
+	if subscriptionID == "" {
+		return nil, fmt.Errorf("stripe: UpcomingInvoice requires a subscriptionID")
+	}
+	params := &sgo.InvoiceCreatePreviewParams{Subscription: String(subscriptionID)}
+	c.prep(&params.Params)
+	return c.api.V1Invoices.CreatePreview(ctx, params)
 }
 
 // CouponDuration controls how long a coupon's discount applies.

@@ -18,8 +18,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -51,15 +50,16 @@ func main() {
 	customerID := os.Getenv("STRIPE_CUSTOMER_ID")
 	if customerID == "" {
 		cus, err := client.CreateCustomer(ctx, stripe.CreateCustomerParams{
-			Email:    "alice@example.com",
-			Name:     "Alice",
-			Metadata: map[string]string{"app_user_id": "u-42"},
+			Email:         "alice@example.com",
+			Name:          "Alice",
+			Metadata:      map[string]string{"app_user_id": "u-42"},
+			PaymentMethod: "pm_card_visa", // test card, so subscriptions can bill it
 		})
 		if err != nil {
-			log.Fatalf("create customer: %v", err)
+			fatal("create customer", "err", err)
 		}
 		customerID = cus.ID
-		fmt.Println("customer:", customerID)
+		slog.Info("customer", "id", customerID)
 	}
 
 	// ── Subscription billing ──────────────────────────────────────────────────
@@ -72,9 +72,9 @@ func main() {
 		Interval:    stripe.Monthly,
 	})
 	if err != nil {
-		log.Fatalf("create plan: %v", err)
+		fatal("create plan", "err", err)
 	}
-	fmt.Println("plan:", plan.ID)
+	slog.Info("plan", "price", plan.ID)
 
 	sub, err := client.Subscribe(ctx, stripe.SubscribeParams{
 		Customer:  customerID,
@@ -82,10 +82,10 @@ func main() {
 		TrialDays: 14,
 	})
 	if err != nil {
-		log.Fatalf("subscribe: %v", err)
+		fatal("subscribe", "err", err)
 	}
-	fmt.Println("subscription:", sub.ID,
-		"| access until:", stripe.SubscriptionAccessUntil(sub).Format(time.RFC1123))
+	slog.Info("subscription", "id", sub.ID,
+		"access_until", stripe.SubscriptionAccessUntil(sub).Format(time.RFC1123))
 
 	// ── Quota / usage-based billing ───────────────────────────────────────────
 	//
@@ -99,20 +99,20 @@ func main() {
 		Interval:         stripe.Monthly,
 	})
 	if err != nil {
-		log.Fatalf("setup quota: %v", err)
+		fatal("setup quota", "err", err)
 	}
-	fmt.Println("quota price:", quota.Price.ID)
+	slog.Info("quota", "price", quota.Price.ID)
 
 	if _, err := client.Subscribe(ctx, stripe.SubscribeParams{
 		Customer: customerID,
 		PriceID:  quota.Price.ID,
 	}); err != nil {
-		log.Fatalf("subscribe to quota: %v", err)
+		fatal("subscribe to quota", "err", err)
 	}
 
 	// Report 1 500 requests → ceil(1500/1000) * $2 = $4.
 	if _, err := client.ReportUsage(ctx, customerID, "api_request", 1500); err != nil {
-		log.Fatalf("report usage: %v", err)
+		fatal("report usage", "err", err)
 	}
 
 	// Prepaid credit grant: include 1 000 requests for free each month. Re-grant
@@ -125,9 +125,9 @@ func main() {
 		PriceIDs:  []string{quota.Price.ID},
 	})
 	if err != nil {
-		log.Fatalf("grant quota: %v", err)
+		fatal("grant quota", "err", err)
 	}
-	fmt.Println("credit grant:", grant.ID)
+	slog.Info("credit grant", "id", grant.ID)
 
 	// ── One-off purchase via Checkout ─────────────────────────────────────────
 	//
@@ -136,7 +136,7 @@ func main() {
 	cart := stripe.NewCart("usd").
 		AddItem("Pro T-Shirt", stripe.Dollars(35), 1).
 		AddItem("Sticker pack", stripe.Dollars(5), 3).
-		WithAutomaticTax()
+		ShipTo("US")
 
 	session, err := client.Checkout(ctx, stripe.CheckoutParams{
 		Cart:       cart,
@@ -144,9 +144,9 @@ func main() {
 		CancelURL:  "https://example.com/cancel",
 	})
 	if err != nil {
-		log.Fatalf("checkout: %v", err)
+		fatal("checkout", "err", err)
 	}
-	fmt.Println("checkout URL:", session.URL)
+	slog.Info("checkout", "url", session.URL)
 
 	// ── Refund ────────────────────────────────────────────────────────────────
 	//
@@ -159,9 +159,9 @@ func main() {
 			Reason:          stripe.RefundRequestedByCustomer,
 		})
 		if err != nil {
-			log.Fatalf("refund: %v", err)
+			fatal("refund", "err", err)
 		}
-		fmt.Printf("refund: %s  amount: %d\n", refund.ID, refund.Amount)
+		slog.Info("refund", "id", refund.ID, "amount", refund.Amount)
 
 		// Partial refund ($5.00 back).
 		partial, err := client.RefundPayment(ctx, stripe.RefundParams{
@@ -170,24 +170,34 @@ func main() {
 			Reason:          stripe.RefundRequestedByCustomer,
 		})
 		if err != nil {
-			log.Fatalf("partial refund: %v", err)
+			fatal("partial refund", "err", err)
 		}
-		fmt.Printf("partial refund: %s  amount: %d\n", partial.ID, partial.Amount)
+		slog.Info("partial refund", "id", partial.ID, "amount", partial.Amount)
 	}
 
-	// ── Subscription cancellation (with prorated refund) ──────────────────────
+	// ── Subscription cancellation (with refund) ───────────────────────────────
 	//
-	// UnsubscribeWithRefund cancels immediately and refunds the unused portion
-	// of the current billing period.
+	// UnsubscribeWithRefund cancels immediately and fully refunds the latest
+	// invoice's payment. refund is nil when nothing was charged yet (like the
+	// 14-day trial above).
 	cancelled, refund, err := client.UnsubscribeWithRefund(ctx, sub.ID)
 	if err != nil {
-		log.Fatalf("cancel with refund: %v", err)
+		fatal("cancel with refund", "err", err)
 	}
-	fmt.Printf("subscription %s cancelled, refund %s issued\n", cancelled.Status, refund.ID)
+	if refund != nil {
+		slog.Info("subscription cancelled", "status", cancelled.Status, "refund", refund.ID)
+	} else {
+		slog.Info("subscription cancelled, nothing to refund (still in trial)", "status", cancelled.Status)
+	}
 
 	// Void any remaining prepaid quota so it cannot be consumed after cancellation.
 	if _, err := client.VoidCreditGrant(ctx, grant.ID); err != nil {
-		log.Fatalf("void grant: %v", err)
+		fatal("void grant", "err", err)
 	}
-	fmt.Println("credit grant voided")
+	slog.Info("credit grant voided")
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

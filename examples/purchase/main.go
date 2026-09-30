@@ -4,8 +4,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"ella.to/stripe"
@@ -38,8 +37,13 @@ func main() {
 		Metadata:      map[string]string{"order_ref": "ORDER-1001"},
 	})
 	if err != nil {
-		log.Fatalf("checkout: %v", err)
+		fatal("checkout", "err", err)
 	}
 
-	fmt.Println("send the buyer to:", session.URL)
+	slog.Info("send the buyer to Checkout", "url", session.URL)
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

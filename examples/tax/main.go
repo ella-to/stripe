@@ -4,8 +4,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"ella.to/stripe"
@@ -25,9 +24,9 @@ func main() {
 		TaxType:      "sales_tax",
 	})
 	if err != nil {
-		log.Fatalf("create CA tax: %v", err)
+		fatal("create CA tax", "err", err)
 	}
-	fmt.Println("platform tax rate:", caTax.ID)
+	slog.Info("platform tax rate", "id", caTax.ID)
 
 	// An EU VAT rate created on a connected account.
 	if acct := os.Getenv("STRIPE_CONNECTED_ACCOUNT"); acct != "" {
@@ -40,20 +39,25 @@ func main() {
 			Inclusive:    true,
 		})
 		if err != nil {
-			log.Fatalf("create connected-account VAT: %v", err)
+			fatal("create connected-account VAT", "err", err)
 		}
-		fmt.Println("connected-account VAT rate:", vat.ID)
+		slog.Info("connected-account VAT rate", "id", vat.ID)
 	}
 
 	// List active tax rates.
 	rates, err := client.ListTaxRates(ctx, true)
 	if err != nil {
-		log.Fatalf("list tax rates: %v", err)
+		fatal("list tax rates", "err", err)
 	}
-	fmt.Printf("found %d active tax rates\n", len(rates))
+	slog.Info("active tax rates", "count", len(rates))
 
 	// Archive a tax rate (Stripe's form of deletion).
 	if _, err := client.DeactivateTaxRate(ctx, caTax.ID); err != nil {
-		log.Fatalf("deactivate tax: %v", err)
+		fatal("deactivate tax", "err", err)
 	}
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

@@ -4,8 +4,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -17,6 +16,17 @@ func main() {
 	ctx := context.Background()
 
 	customerID := os.Getenv("STRIPE_CUSTOMER_ID") // cus_...
+	if customerID == "" {
+		// No customer given: create one with a test card attached.
+		cus, err := client.CreateCustomer(ctx, stripe.CreateCustomerParams{
+			Email:         "demo@example.com",
+			PaymentMethod: "pm_card_visa",
+		})
+		if err != nil {
+			fatal("create customer", "err", err)
+		}
+		customerID = cus.ID
+	}
 
 	// Create a monthly and a yearly plan for the same product.
 	monthly, err := client.CreatePlan(ctx, stripe.PlanParams{
@@ -25,7 +35,7 @@ func main() {
 		Interval:    stripe.Monthly,
 	})
 	if err != nil {
-		log.Fatalf("create monthly plan: %v", err)
+		fatal("create monthly plan", "err", err)
 	}
 
 	yearly, err := client.CreatePlan(ctx, stripe.PlanParams{
@@ -34,21 +44,21 @@ func main() {
 		Interval:    stripe.Yearly,
 	})
 	if err != nil {
-		log.Fatalf("create yearly plan: %v", err)
+		fatal("create yearly plan", "err", err)
 	}
-	fmt.Println("monthly price:", monthly.ID, "yearly price:", yearly.ID)
+	slog.Info("plans", "monthly", monthly.ID, "yearly", yearly.ID)
 
-	// SASS platform creates a 20%-off coupon for yearly plans. Store the coupon
-	// ID and let customers choose it at checkout.
+	// A 20%-off coupon for yearly plans. Store the coupon ID and apply it when
+	// customers pick the yearly plan.
 	yearlyDiscount, err := client.CreateCoupon(ctx, stripe.CouponParams{
 		Name:       "Yearly Saver 20%",
 		PercentOff: 20,
 		Duration:   stripe.CouponOnce,
 	})
 	if err != nil {
-		log.Fatalf("create coupon: %v", err)
+		fatal("create coupon", "err", err)
 	}
-	fmt.Println("yearly coupon:", yearlyDiscount.ID)
+	slog.Info("yearly coupon", "id", yearlyDiscount.ID)
 
 	// Subscribe with a 14-day trial.
 	sub, err := client.Subscribe(ctx, stripe.SubscribeParams{
@@ -57,10 +67,10 @@ func main() {
 		TrialDays: 14,
 	})
 	if err != nil {
-		log.Fatalf("subscribe: %v", err)
+		fatal("subscribe", "err", err)
 	}
-	fmt.Println("subscription:", sub.ID, "status:", sub.Status)
-	fmt.Println("trial access until:", stripe.SubscriptionAccessUntil(sub).Format(time.RFC1123))
+	slog.Info("subscription", "id", sub.ID, "status", sub.Status)
+	slog.Info("trial access until", "time", stripe.SubscriptionAccessUntil(sub).Format(time.RFC1123))
 
 	// A "3 month" trial is expressed with a trial end timestamp.
 	_, err = client.Subscribe(ctx, stripe.SubscribeParams{
@@ -69,7 +79,7 @@ func main() {
 		TrialEnd: time.Now().AddDate(0, 3, 0),
 	})
 	if err != nil {
-		log.Fatalf("subscribe yearly: %v", err)
+		fatal("subscribe yearly", "err", err)
 	}
 
 	// Subscribe to yearly with the discount coupon applied.
@@ -79,43 +89,48 @@ func main() {
 		CouponID: yearlyDiscount.ID,
 	})
 	if err != nil {
-		log.Fatalf("subscribe with discount: %v", err)
+		fatal("subscribe with discount", "err", err)
 	}
-	fmt.Println("discounted yearly:", discountedYearly.ID)
+	slog.Info("discounted yearly", "id", discountedYearly.ID)
 
 	// Upgrade the monthly subscription to yearly.
 	if _, err := client.SwapPlan(ctx, sub.ID, yearly.ID); err != nil {
-		log.Fatalf("swap plan: %v", err)
+		fatal("swap plan", "err", err)
 	}
 
 	// Cancel at period end — customer keeps access until their paid period ends.
 	cancelled, err := client.Unsubscribe(ctx, sub.ID, stripe.CancelAtPeriodEnd)
 	if err != nil {
-		log.Fatalf("cancel at period end: %v", err)
+		fatal("cancel at period end", "err", err)
 	}
-	fmt.Println("access until:", stripe.SubscriptionAccessUntil(cancelled).Format(time.RFC1123))
+	slog.Info("access until", "time", stripe.SubscriptionAccessUntil(cancelled).Format(time.RFC1123))
 
 	// Customer changed their mind — reactivate before the period ends.
 	reactivated, err := client.Resubscribe(ctx, sub.ID)
 	if err != nil {
-		log.Fatalf("resubscribe: %v", err)
+		fatal("resubscribe", "err", err)
 	}
-	fmt.Println("reactivated, cancel_at_period_end:", reactivated.CancelAtPeriodEnd)
+	slog.Info("reactivated", "cancel_at_period_end", reactivated.CancelAtPeriodEnd)
 
 	// List all subscriptions for the customer.
 	subs, err := client.ListSubscriptions(ctx, customerID)
 	if err != nil {
-		log.Fatalf("list subscriptions: %v", err)
+		fatal("list subscriptions", "err", err)
 	}
-	fmt.Printf("%d subscription(s) for customer\n", len(subs))
+	slog.Info("subscriptions for customer", "count", len(subs))
 
 	// Cancel immediately (no refund).
 	if _, err := client.Unsubscribe(ctx, sub.ID, stripe.CancelImmediately); err != nil {
-		log.Fatalf("cancel now: %v", err)
+		fatal("cancel now", "err", err)
 	}
 
 	// Retire the discount coupon when the promotion ends.
 	if err := client.DeleteCoupon(ctx, yearlyDiscount.ID); err != nil {
-		log.Fatalf("delete coupon: %v", err)
+		fatal("delete coupon", "err", err)
 	}
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

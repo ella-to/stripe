@@ -9,8 +9,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"ella.to/stripe"
@@ -36,7 +35,7 @@ func main() {
 
 	seller := os.Getenv("STRIPE_CONNECTED_ACCOUNT") // acct_...
 	if seller == "" {
-		log.Fatal("set STRIPE_CONNECTED_ACCOUNT to a connected account id")
+		fatal("set STRIPE_CONNECTED_ACCOUNT to a connected account id")
 	}
 
 	// 1. Assign a platform fee to this connected account. It is stored on the
@@ -45,17 +44,17 @@ func main() {
 	if _, err := client.SetPlatformFee(ctx, seller, stripe.PlatformFee{
 		Fixed: stripe.Dollars(3),
 	}); err != nil {
-		log.Fatalf("set platform fee: %v", err)
+		fatal("set platform fee", "err", err)
 	}
 
 	// 2. Inspect the computed split locally before charging anything.
 	fee, _, err := client.GetPlatformFee(ctx, seller)
 	if err != nil {
-		log.Fatalf("get platform fee: %v", err)
+		fatal("get platform fee", "err", err)
 	}
 	gross := stripe.Dollars(10)
 	platformCut := fee.Compute(gross)
-	fmt.Printf("gross=%d platform_fee=%d (Stripe fee is paid by the seller separately)\n", gross, platformCut)
+	slog.Info("fee preview (Stripe fee is paid by the seller separately)", "gross", gross, "platform_fee", platformCut)
 
 	// 3. Take a $10 direct charge on the seller. The platform fee is resolved
 	//    from the account automatically (Fee left nil). Provide a real, attached
@@ -69,16 +68,16 @@ func main() {
 		// Confirm:       true,
 	})
 	if err != nil {
-		log.Fatalf("charge with fee: %v", err)
+		fatal("charge with fee", "err", err)
 	}
-	fmt.Printf("payment_intent=%s application_fee=%d status=%s\n", pi.ID, pi.ApplicationFeeAmount, pi.Status)
+	slog.Info("charged", "payment_intent", pi.ID, "application_fee", pi.ApplicationFeeAmount, "status", pi.Status)
 
 	// 4. Change the fee at any time. Switch this account to 2.9% + $0.30.
 	if _, err := client.SetPlatformFee(ctx, seller, stripe.PlatformFee{
 		Percent: 2.9,
 		Fixed:   stripe.Dollars(0.30),
 	}); err != nil {
-		log.Fatalf("update platform fee: %v", err)
+		fatal("update platform fee", "err", err)
 	}
 
 	// 5. A different connected account can carry a different fee. Override the
@@ -90,7 +89,7 @@ func main() {
 			Fee:              &stripe.PlatformFee{Percent: 10}, // 10% just for this charge
 		})
 		if err != nil {
-			log.Fatalf("charge other account: %v", err)
+			fatal("charge other account", "err", err)
 		}
 	}
 
@@ -107,4 +106,9 @@ func main() {
 	//        Customer: "cus_123", PriceID: priceID,
 	//        ConnectedAccount: seller, FeePercent: 10, // 10% of every invoice
 	//    })
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

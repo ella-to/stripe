@@ -14,7 +14,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -140,6 +140,13 @@ func main() {
 		return err
 	}
 
-	log.Println("listening on :8080  (/connect, /callback, /fee)")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	slog.Info("listening", "addr", ":8080", "routes", "/connect, /callback, /fee")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fatal("server stopped", "err", err)
+	}
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

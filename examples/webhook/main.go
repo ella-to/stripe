@@ -5,7 +5,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -31,36 +31,43 @@ func main() {
 			},
 		})
 		if err != nil {
-			log.Fatalf("create endpoint: %v", err)
+			fatal("create endpoint", "err", err)
 		}
 		// Store ep.Secret securely; it verifies deliveries for this endpoint.
-		log.Println("created endpoint", ep.ID, "secret:", ep.Secret)
+		slog.Info("created endpoint", "id", ep.ID, "secret", ep.Secret)
 	}
 
 	// Build the dispatcher and register strongly typed handlers. The object
 	// passed to each handler is decoded and validated from the event payload.
-	d := client.Webhooks(stripe.WithErrorHandler(func(ev stripe.Event, err error) {
-		log.Printf("webhook handler error for %s: %v", ev.Type, err)
-	}))
+	// Errors (bad signatures, failing handlers) are logged with slog.Default();
+	// pass stripe.WithLogger to stripe.New, or stripe.WithErrorHandler here, to customise.
+	d := client.Webhooks()
 
 	stripe.On(d, stripe.EventInvoicePaid, func(ctx context.Context, ev stripe.Event, inv *stripe.Invoice) error {
-		log.Printf("invoice %s paid, amount=%d", inv.ID, inv.AmountPaid)
+		slog.Info("invoice paid", "id", inv.ID, "amount", inv.AmountPaid)
 		// Heavy work here is fine: it runs in its own goroutine and Stripe has
 		// already received its 200.
 		return nil
 	})
 
 	stripe.On(d, stripe.EventCustomerSubscriptionDeleted, func(ctx context.Context, ev stripe.Event, sub *stripe.Subscription) error {
-		log.Printf("subscription %s canceled for customer %s", sub.ID, sub.Customer.ID)
+		slog.Info("subscription canceled", "id", sub.ID, "customer", sub.Customer.ID)
 		return nil
 	})
 
 	stripe.On(d, stripe.EventCheckoutSessionCompleted, func(ctx context.Context, ev stripe.Event, cs *stripe.CheckoutSession) error {
-		log.Printf("checkout %s completed, payment_status=%s", cs.ID, cs.PaymentStatus)
+		slog.Info("checkout completed", "id", cs.ID, "payment_status", cs.PaymentStatus)
 		return nil
 	})
 
 	http.Handle("/stripe/webhook", d)
-	log.Println("listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	slog.Info("listening", "addr", ":8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fatal("server stopped", "err", err)
+	}
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

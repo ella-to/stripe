@@ -1,12 +1,10 @@
 // Command refund demonstrates purchase and full/partial refund flows, including
-// subscription cancellation with a refund for the LiteScale "cancel with
-// money-back" scenario.
+// subscription cancellation with a refund (a "money-back guarantee").
 package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -18,6 +16,17 @@ func main() {
 	ctx := context.Background()
 
 	customerID := os.Getenv("STRIPE_CUSTOMER_ID") // cus_...
+	if customerID == "" {
+		// No customer given: create one with a test card attached.
+		cus, err := client.CreateCustomer(ctx, stripe.CreateCustomerParams{
+			Email:         "demo@example.com",
+			PaymentMethod: "pm_card_visa",
+		})
+		if err != nil {
+			fatal("create customer", "err", err)
+		}
+		customerID = cus.ID
+	}
 	storeAccountID := os.Getenv("STRIPE_STORE_ACCOUNT_ID") // acct_...
 
 	// --- One-off purchase with a platform fee, then a full refund ---
@@ -32,12 +41,12 @@ func main() {
 		SuccessURL:       "https://rentapp.example.com/success",
 		CancelURL:        "https://rentapp.example.com/cancel",
 		Customer:         customerID,
-		Fee:              &stripe.PlatformFee{Percent: 10}, // LiteScale takes 10%
+		Fee:              &stripe.PlatformFee{Percent: 10}, // the platform takes 10%
 	})
 	if err != nil {
-		log.Fatalf("checkout: %v", err)
+		fatal("checkout", "err", err)
 	}
-	fmt.Println("checkout url:", session.URL)
+	slog.Info("checkout", "url", session.URL)
 
 	// Later, when checkout.session.completed fires, you have a PaymentIntent id.
 	// Simulate the scenario where the customer cancels within the refund window:
@@ -49,9 +58,9 @@ func main() {
 			Reason:          stripe.RefundRequestedByCustomer,
 		})
 		if err != nil {
-			log.Fatalf("full refund: %v", err)
+			fatal("full refund", "err", err)
 		}
-		fmt.Printf("refund %s status: %s\n", refund.ID, refund.Status)
+		slog.Info("refund", "id", refund.ID, "status", refund.Status)
 
 		// Partial refund — customer kept the bike for half the day.
 		partial, err := client.RefundPayment(ctx, stripe.RefundParams{
@@ -60,9 +69,9 @@ func main() {
 			Reason:          stripe.RefundRequestedByCustomer,
 		})
 		if err != nil {
-			log.Fatalf("partial refund: %v", err)
+			fatal("partial refund", "err", err)
 		}
-		fmt.Printf("partial refund %s for %.2f\n", partial.ID, float64(partial.Amount)/100)
+		slog.Info("partial refund", "id", partial.ID, "amount", partial.Amount)
 	}
 
 	// --- Subscription cancel with refund ---
@@ -74,7 +83,7 @@ func main() {
 		Interval:    stripe.Monthly,
 	})
 	if err != nil {
-		log.Fatalf("create plan: %v", err)
+		fatal("create plan", "err", err)
 	}
 
 	sub, err := client.Subscribe(ctx, stripe.SubscribeParams{
@@ -82,35 +91,40 @@ func main() {
 		PriceID:  plan.ID,
 	})
 	if err != nil {
-		log.Fatalf("subscribe: %v", err)
+		fatal("subscribe", "err", err)
 	}
-	fmt.Println("subscribed:", sub.ID)
+	slog.Info("subscribed", "id", sub.ID)
 
 	// Show the customer when their access ends (now = period end since active).
 	until := stripe.SubscriptionAccessUntil(sub)
-	fmt.Printf("access until: %s\n", until.Format(time.RFC1123))
+	slog.Info("access until", "time", until.Format(time.RFC1123))
 
 	// Cancel at period end (customer keeps access until paid period ends).
 	cancelled, err := client.Unsubscribe(ctx, sub.ID, stripe.CancelAtPeriodEnd)
 	if err != nil {
-		log.Fatalf("cancel at period end: %v", err)
+		fatal("cancel at period end", "err", err)
 	}
-	fmt.Printf("will cancel at: %s\n", stripe.SubscriptionAccessUntil(cancelled).Format(time.RFC1123))
+	slog.Info("will cancel", "at", stripe.SubscriptionAccessUntil(cancelled).Format(time.RFC1123))
 
 	// Customer changed their mind — re-enable the subscription.
 	reactivated, err := client.Resubscribe(ctx, sub.ID)
 	if err != nil {
-		log.Fatalf("resubscribe: %v", err)
+		fatal("resubscribe", "err", err)
 	}
-	fmt.Println("resubscribed, status:", reactivated.Status)
+	slog.Info("resubscribed", "status", reactivated.Status)
 
 	// Cancel immediately AND refund the last payment (money-back guarantee).
 	cancelledSub, refund, err := client.UnsubscribeWithRefund(ctx, sub.ID)
 	if err != nil {
-		log.Fatalf("cancel with refund: %v", err)
+		fatal("cancel with refund", "err", err)
 	}
-	fmt.Println("subscription cancelled:", cancelledSub.Status)
+	slog.Info("subscription cancelled", "status", cancelledSub.Status)
 	if refund != nil {
-		fmt.Printf("refunded %d %s\n", refund.Amount, refund.Currency)
+		slog.Info("refunded", "amount", refund.Amount, "currency", refund.Currency)
 	}
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

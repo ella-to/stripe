@@ -1,9 +1,12 @@
 // Package stripe is a thin, opinionated wrapper around the official stripe-go
 // SDK (github.com/stripe/stripe-go/v86). It collapses the most common Stripe
-// integration patterns - Connect onboarding, subscriptions, usage based
-// quotas, one-off purchases, webhooks and tax - into a small, task oriented
-// API so that the caller does not have to assemble low level parameter structs
-// by hand.
+// integration patterns - hosted Checkout, subscriptions and trials, the
+// customer portal, usage based billing, refunds, webhooks, tax and Connect
+// marketplaces - into a small, task oriented API so that the caller does not
+// have to assemble low level parameter structs by hand.
+//
+// Step-by-step, runnable guides live in the guides/ directory of the
+// repository.
 //
 // The wrapper never hides the underlying types: every method returns the real
 // stripe-go resource (re-exported here for convenience, see types.go) so you
@@ -12,6 +15,7 @@
 package stripe
 
 import (
+	"log/slog"
 	"math"
 
 	sgo "github.com/stripe/stripe-go/v86"
@@ -31,6 +35,7 @@ type Client struct {
 	oauthClientID    string
 	connectedAccount string
 	feeResolver      FeeResolver
+	logger           *slog.Logger
 
 	// Populated when the client authenticates via a Connect OAuth access token
 	// (see NewFromOAuthToken): the account the token represents and the refresh
@@ -65,7 +70,8 @@ func WithOAuthRedirectURI(uri string) Option {
 
 // WithStripeClient lets callers inject a fully customised *stripe.Client (for
 // example one configured with custom backends for testing). When supplied it
-// takes precedence over the api key for building requests.
+// takes precedence over the api key for building requests, and WithLogger no
+// longer affects stripe-go's internal logging (configure it on your backends).
 func WithStripeClient(sc *sgo.Client) Option {
 	return func(c *Client) {
 		if sc != nil {
@@ -85,12 +91,15 @@ func WithFeeResolver(r FeeResolver) Option {
 
 // New creates a Client from a secret API key (starts with "sk_").
 func New(apiKey string, opts ...Option) *Client {
-	c := &Client{
-		api:    sgo.NewClient(apiKey),
-		apiKey: apiKey,
-	}
+	c := &Client{apiKey: apiKey}
 	for _, o := range opts {
 		o(c)
+	}
+	if c.api == nil {
+		backends := sgo.NewBackendsWithConfig(&sgo.BackendConfig{
+			LeveledLogger: slogAdapter{logger: c.log},
+		})
+		c.api = sgo.NewClient(apiKey, sgo.WithBackends(backends))
 	}
 	if c.feeResolver == nil {
 		c.feeResolver = NewAccountMetadataFeeStore(c.api)
@@ -111,6 +120,14 @@ func NewFromOAuthToken(tok *OAuthToken, opts ...Option) *Client {
 	c.oauthAccountID = tok.StripeUserID
 	c.oauthRefresh = tok.RefreshToken
 	return c
+}
+
+// log returns the configured logger, or slog.Default().
+func (c *Client) log() *slog.Logger {
+	if c.logger != nil {
+		return c.logger
+	}
+	return slog.Default()
 }
 
 // Raw exposes the underlying official stripe-go client for advanced use cases

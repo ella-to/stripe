@@ -24,6 +24,13 @@ type RefundParams struct {
 	Amount   int64
 	Reason   RefundReason
 	Metadata map[string]string
+
+	// ConnectedAccount must be set when refunding a direct charge made on a
+	// connected account (Checkout / ChargeWithFee with ConnectedAccount).
+	ConnectedAccount string
+	// RefundApplicationFee also returns your platform fee to the connected
+	// account, proportionally to the refunded amount. Only for direct charges.
+	RefundApplicationFee bool
 }
 
 // RefundPayment issues a full or partial refund against a PaymentIntent. The
@@ -42,11 +49,18 @@ func (c *Client) RefundPayment(ctx context.Context, p RefundParams) (*Refund, er
 	if p.Reason != "" {
 		params.Reason = String(string(p.Reason))
 	}
+	if p.RefundApplicationFee {
+		params.RefundApplicationFee = Bool(true)
+	}
 	for k, v := range p.Metadata {
 		params.AddMetadata(k, v)
 	}
-	c.prep(&params.Params)
-	return c.api.V1Refunds.Create(ctx, params)
+	eff := c
+	if p.ConnectedAccount != "" {
+		eff = c.ForAccount(p.ConnectedAccount)
+	}
+	eff.prep(&params.Params)
+	return eff.api.V1Refunds.Create(ctx, params)
 }
 
 // CartItem is a single line on a purchase. Provide either PriceID (to reference
@@ -79,6 +93,8 @@ type Cart struct {
 	currency     string
 	items        []CartItem
 	shipping     []shippingRate
+	shipTo       []string
+	taxRateIDs   []string
 	automaticTax bool
 }
 
@@ -122,6 +138,21 @@ func (c *Cart) AddShipping(name string, amount int64) *Cart {
 	return c
 }
 
+// ShipTo asks Checkout to collect a shipping address, limited to the given ISO
+// country codes (e.g. "US", "CA"). The address ends up on
+// CheckoutSession.CollectedInformation.
+func (c *Cart) ShipTo(countries ...string) *Cart {
+	c.shipTo = append(c.shipTo, countries...)
+	return c
+}
+
+// WithTaxRates applies tax rates (see CreateTaxRate) to every item that does
+// not set its own TaxRateIDs. Ignored when automatic tax is enabled.
+func (c *Cart) WithTaxRates(taxRateIDs ...string) *Cart {
+	c.taxRateIDs = append(c.taxRateIDs, taxRateIDs...)
+	return c
+}
+
 // Total returns the sum of the inline-priced items in minor units. Items that
 // reference an existing PriceID are not included (their amount is not known
 // locally); allInline is false when any such item is present. This is used to
@@ -148,8 +179,18 @@ type CheckoutParams struct {
 	SuccessURL    string
 	CancelURL     string
 	Customer      string // optional existing customer id.
-	CustomerEmail string // optional; prefilled on the page.
+	CustomerEmail string // optional; prefilled on the page. Ignored when Customer is set.
 	Metadata      map[string]string
+
+	// ClientReferenceID is your own id for this purchase or user (e.g. an
+	// order id). It is echoed back on the CheckoutSession in webhooks.
+	ClientReferenceID string
+
+	// AllowPromotionCodes shows a "promotion code" box on the Checkout page.
+	AllowPromotionCodes bool
+	// CouponID applies a coupon up front. Cannot be combined with
+	// AllowPromotionCodes.
+	CouponID string
 
 	// ConnectedAccount, when set, turns the checkout into a direct charge on
 	// that connected account ("acct_..."): the account becomes the settlement
@@ -170,12 +211,20 @@ type CheckoutParams struct {
 
 // Checkout creates a hosted Stripe Checkout session for the cart and returns
 // it. Redirect the buyer to CheckoutSession.URL to collect payment.
+//
+// Add "?session_id={CHECKOUT_SESSION_ID}" to SuccessURL and Stripe will fill
+// in the session id, which you can pass to GetCheckoutSession. Fulfil orders
+// from the checkout.session.completed webhook, not from the success page: the
+// buyer may close the tab before it loads.
 func (c *Client) Checkout(ctx context.Context, p CheckoutParams) (*CheckoutSession, error) {
 	if p.Cart == nil || len(p.Cart.items) == 0 {
 		return nil, fmt.Errorf("stripe: Checkout requires a non-empty Cart")
 	}
 	if p.SuccessURL == "" || p.CancelURL == "" {
 		return nil, fmt.Errorf("stripe: Checkout requires SuccessURL and CancelURL")
+	}
+	if p.AllowPromotionCodes && p.CouponID != "" {
+		return nil, fmt.Errorf("stripe: Checkout accepts AllowPromotionCodes or CouponID, not both")
 	}
 
 	cart := p.Cart
@@ -184,11 +233,20 @@ func (c *Client) Checkout(ctx context.Context, p CheckoutParams) (*CheckoutSessi
 		SuccessURL: String(p.SuccessURL),
 		CancelURL:  String(p.CancelURL),
 	}
-	if p.Customer != "" {
-		params.Customer = String(p.Customer)
+	applyCheckoutCustomer(params, p.Customer, p.CustomerEmail, cart.automaticTax, len(cart.shipTo) > 0)
+	if p.ClientReferenceID != "" {
+		params.ClientReferenceID = String(p.ClientReferenceID)
 	}
-	if p.CustomerEmail != "" {
-		params.CustomerEmail = String(p.CustomerEmail)
+	if p.AllowPromotionCodes {
+		params.AllowPromotionCodes = Bool(true)
+	}
+	if p.CouponID != "" {
+		params.Discounts = []*sgo.CheckoutSessionCreateDiscountParams{{Coupon: String(p.CouponID)}}
+	}
+	if len(cart.shipTo) > 0 {
+		params.ShippingAddressCollection = &sgo.CheckoutSessionCreateShippingAddressCollectionParams{
+			AllowedCountries: stringSlice(cart.shipTo),
+		}
 	}
 
 	// A direct charge with a platform (application) fee is made on behalf of the
@@ -237,8 +295,13 @@ func (c *Client) Checkout(ctx context.Context, p CheckoutParams) (*CheckoutSessi
 				li.PriceData.ProductData.Images = stringSlice(it.Images)
 			}
 		}
-		if len(it.TaxRateIDs) > 0 && !cart.automaticTax {
-			li.TaxRates = stringSlice(it.TaxRateIDs)
+		if !cart.automaticTax {
+			switch {
+			case len(it.TaxRateIDs) > 0:
+				li.TaxRates = stringSlice(it.TaxRateIDs)
+			case len(cart.taxRateIDs) > 0:
+				li.TaxRates = stringSlice(cart.taxRateIDs)
+			}
 		}
 		params.LineItems = append(params.LineItems, li)
 	}
@@ -266,4 +329,38 @@ func (c *Client) Checkout(ctx context.Context, p CheckoutParams) (*CheckoutSessi
 
 	eff.prep(&params.Params)
 	return eff.api.V1CheckoutSessions.Create(ctx, params)
+}
+
+// applyCheckoutCustomer sets the customer fields of a Checkout session. Stripe
+// rejects customer together with customer_email, so an existing customer wins.
+// Automatic tax needs an address on file, so Checkout is allowed to save the
+// address it collects back onto an existing customer.
+func applyCheckoutCustomer(params *sgo.CheckoutSessionCreateParams, customer, email string, automaticTax, shipping bool) {
+	switch {
+	case customer != "":
+		params.Customer = String(customer)
+		if automaticTax {
+			params.CustomerUpdate = &sgo.CheckoutSessionCreateCustomerUpdateParams{Address: String("auto")}
+			if shipping {
+				params.CustomerUpdate.Shipping = String("auto")
+			}
+		}
+	case email != "":
+		params.CustomerEmail = String(email)
+	}
+}
+
+// GetCheckoutSession retrieves a Checkout session with its line items
+// expanded. Call it from your success page (with the session_id query
+// parameter) or from a checkout.session.completed webhook to see what was
+// bought. PaymentIntent.ID (one-off) or Subscription.ID (subscriptions) link
+// the session to the resulting payment.
+func (c *Client) GetCheckoutSession(ctx context.Context, sessionID string) (*CheckoutSession, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("stripe: GetCheckoutSession requires a sessionID")
+	}
+	params := &sgo.CheckoutSessionRetrieveParams{}
+	params.AddExpand("line_items")
+	c.prep(&params.Params)
+	return c.api.V1CheckoutSessions.Retrieve(ctx, sessionID, params)
 }

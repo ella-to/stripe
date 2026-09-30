@@ -6,8 +6,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -19,6 +18,17 @@ func main() {
 	ctx := context.Background()
 
 	customerID := os.Getenv("STRIPE_CUSTOMER_ID") // cus_...
+	if customerID == "" {
+		// No customer given: create one with a test card attached.
+		cus, err := client.CreateCustomer(ctx, stripe.CreateCustomerParams{
+			Email:         "demo@example.com",
+			PaymentMethod: "pm_card_visa",
+		})
+		if err != nil {
+			fatal("create customer", "err", err)
+		}
+		customerID = cus.ID
+	}
 
 	// Set up the meter + metered package price in one call:
 	//   $2.00 per 1000 API requests, billed monthly, overage automatic.
@@ -31,9 +41,9 @@ func main() {
 		Interval:         stripe.Monthly,
 	})
 	if err != nil {
-		log.Fatalf("setup metered quota: %v", err)
+		fatal("setup metered quota", "err", err)
 	}
-	fmt.Println("meter:", plan.Meter.ID, "price:", plan.Price.ID)
+	slog.Info("metered quota ready", "meter", plan.Meter.ID, "price", plan.Price.ID)
 
 	// Subscribe the customer to the metered price.
 	sub, err := client.Subscribe(ctx, stripe.SubscribeParams{
@@ -41,14 +51,14 @@ func main() {
 		PriceID:  plan.Price.ID,
 	})
 	if err != nil {
-		log.Fatalf("subscribe to metered price: %v", err)
+		fatal("subscribe to metered price", "err", err)
 	}
-	fmt.Println("metered subscription:", sub.ID)
+	slog.Info("metered subscription", "id", sub.ID)
 
 	// Report usage as the customer consumes the resource. Crossing 1000 rolls
 	// into the next $2 package automatically.
 	if _, err := client.ReportUsage(ctx, customerID, "api_request", 1500); err != nil {
-		log.Fatalf("report usage: %v", err)
+		fatal("report usage", "err", err)
 	}
 
 	// Prepaid, expiring monthly quota: grant $2 of credit that expires in 30
@@ -61,15 +71,20 @@ func main() {
 		PriceIDs:  []string{plan.Price.ID},
 	})
 	if err != nil {
-		log.Fatalf("grant quota: %v", err)
+		fatal("grant quota", "err", err)
 	}
-	fmt.Println("credit grant:", grant.ID)
+	slog.Info("credit grant", "id", grant.ID)
 
 	// When the customer cancels their quota plan, void the remaining credit so
 	// it cannot be consumed after they are no longer a paying subscriber.
 	voided, err := client.VoidCreditGrant(ctx, grant.ID)
 	if err != nil {
-		log.Fatalf("void credit grant: %v", err)
+		fatal("void credit grant", "err", err)
 	}
-	fmt.Println("voided credit grant:", voided.ID)
+	slog.Info("voided credit grant", "id", voided.ID)
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

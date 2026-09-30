@@ -65,6 +65,7 @@ type MeteredPriceParams struct {
 	PackageSize      int64    // units per package, e.g. 1000.
 	Currency         string   // defaults to "usd".
 	Interval         Interval // billing cadence, defaults to Monthly.
+	LookupKey        string   // optional stable name, see PlanParams.LookupKey.
 }
 
 // CreateMeteredPrice creates the package/overage price described by p.
@@ -98,6 +99,9 @@ func (c *Client) CreateMeteredPrice(ctx context.Context, p MeteredPriceParams) (
 			Name: String(p.ProductName),
 		},
 	}
+	if p.LookupKey != "" {
+		params.LookupKey = String(p.LookupKey)
+	}
 	c.prep(&params.Params)
 	return c.api.V1Prices.Create(ctx, params)
 }
@@ -106,15 +110,59 @@ func (c *Client) CreateMeteredPrice(ctx context.Context, p MeteredPriceParams) (
 // every time the customer consumes the metered resource (e.g. makes an API
 // request). Stripe aggregates these events and bills them on the next invoice.
 func (c *Client) ReportUsage(ctx context.Context, customerID, eventName string, quantity int64) (*BillingMeterEvent, error) {
+	return c.ReportUsageEvent(ctx, UsageEvent{Customer: customerID, EventName: eventName, Value: quantity})
+}
+
+// UsageEvent is a single usage report for ReportUsageEvent.
+type UsageEvent struct {
+	Customer  string // customer id ("cus_...") - required.
+	EventName string // the meter's EventName - required.
+	Value     int64
+	// Identifier deduplicates retries: Stripe ignores a second event with the
+	// same identifier (within about 24 hours). Use e.g. your request id.
+	Identifier string
+	// Timestamp of the usage; defaults to now. Must be within the past 35 days.
+	Timestamp time.Time
+}
+
+// ReportUsageEvent is ReportUsage with support for an idempotent Identifier
+// and a custom timestamp.
+func (c *Client) ReportUsageEvent(ctx context.Context, e UsageEvent) (*BillingMeterEvent, error) {
+	if e.Customer == "" || e.EventName == "" {
+		return nil, fmt.Errorf("stripe: ReportUsage requires a customer and event name")
+	}
 	params := &sgo.BillingMeterEventCreateParams{
-		EventName: String(eventName),
+		EventName: String(e.EventName),
 		Payload: map[string]string{
-			"stripe_customer_id": customerID,
-			"value":              strconv.FormatInt(quantity, 10),
+			"stripe_customer_id": e.Customer,
+			"value":              strconv.FormatInt(e.Value, 10),
 		},
+	}
+	if e.Identifier != "" {
+		params.Identifier = String(e.Identifier)
+	}
+	if !e.Timestamp.IsZero() {
+		params.Timestamp = Int64(e.Timestamp.Unix())
 	}
 	c.prep(&params.Params)
 	return c.api.V1BillingMeterEvents.Create(ctx, params)
+}
+
+// FindMeter returns the active meter with the given event name. found is false
+// when there is none. Event names are unique per account, so this is how you
+// get hold of a meter created by an earlier run.
+func (c *Client) FindMeter(ctx context.Context, eventName string) (meter *BillingMeter, found bool, err error) {
+	params := &sgo.BillingMeterListParams{Status: String("active")}
+	c.prepList(&params.ListParams)
+	for m, err := range c.api.V1BillingMeters.List(ctx, params).All(ctx) {
+		if err != nil {
+			return nil, false, err
+		}
+		if m.EventName == eventName {
+			return m, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 // QuotaGrantParams describes a prepaid, optionally expiring, pool of credit for
@@ -198,6 +246,9 @@ type SetupMeteredQuotaParams struct {
 	PackageSize      int64       // units per package, e.g. 1000.
 	Currency         string      // defaults to "usd".
 	Interval         Interval    // defaults to Monthly.
+	// LookupKey, when set, makes SetupMeteredQuota reuse an existing price
+	// with this key instead of creating a new one on every call.
+	LookupKey string
 }
 
 // VoidCreditGrant cancels an active credit grant so the customer can no longer
@@ -215,16 +266,35 @@ func (c *Client) VoidCreditGrant(ctx context.Context, grantID string) (*BillingC
 // SetupMeteredQuota creates the meter and the metered/package price together.
 // Subscribe a customer to the returned Price, then call ReportUsage as they
 // consume the resource.
+//
+// It is safe to call on every start: an existing meter with the same
+// EventName is reused, and so is an existing price when LookupKey is set.
 func (c *Client) SetupMeteredQuota(ctx context.Context, p SetupMeteredQuotaParams) (*MeteredQuotaPlan, error) {
-	meter, err := c.CreateMeter(ctx, MeterParams{
-		DisplayName: p.ProductName,
-		EventName:   p.EventName,
-		Aggregation: p.Aggregation,
-	})
+	meter, found, err := c.FindMeter(ctx, p.EventName)
 	if err != nil {
-		return nil, fmt.Errorf("stripe: create meter: %w", err)
+		return nil, fmt.Errorf("stripe: find meter: %w", err)
+	}
+	if !found {
+		meter, err = c.CreateMeter(ctx, MeterParams{
+			DisplayName: p.ProductName,
+			EventName:   p.EventName,
+			Aggregation: p.Aggregation,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("stripe: create meter: %w", err)
+		}
+	}
+	if p.LookupKey != "" {
+		price, found, err := c.FindPrice(ctx, p.LookupKey)
+		if err != nil {
+			return nil, fmt.Errorf("stripe: find metered price: %w", err)
+		}
+		if found {
+			return &MeteredQuotaPlan{Meter: meter, Price: price}, nil
+		}
 	}
 	price, err := c.CreateMeteredPrice(ctx, MeteredPriceParams{
+		LookupKey:        p.LookupKey,
 		ProductName:      p.ProductName,
 		MeterID:          meter.ID,
 		AmountPerPackage: p.AmountPerPackage,

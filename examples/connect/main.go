@@ -5,8 +5,7 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"ella.to/stripe"
@@ -30,9 +29,9 @@ func main() {
 		Metadata:     map[string]string{"internal_id": "seller-42"},
 	})
 	if err != nil {
-		log.Fatalf("register account: %v", err)
+		fatal("register account", "err", err)
 	}
-	fmt.Println("created connected account:", acct.ID)
+	slog.Info("created connected account", "id", acct.ID)
 
 	// 2. Send the seller through hosted onboarding.
 	link, err := client.AccountOnboardingLink(ctx, acct.ID,
@@ -40,9 +39,9 @@ func main() {
 		"https://app.example.com/return",
 	)
 	if err != nil {
-		log.Fatalf("onboarding link: %v", err)
+		fatal("onboarding link", "err", err)
 	}
-	fmt.Println("onboard here:", link.URL)
+	slog.Info("onboard here", "url", link.URL)
 
 	// 3. Later, request additional/updated information.
 	updateLink, err := client.RequestAccountUpdate(ctx, acct.ID,
@@ -50,25 +49,25 @@ func main() {
 		"https://app.example.com/return",
 	)
 	if err != nil {
-		log.Fatalf("update link: %v", err)
+		fatal("update link", "err", err)
 	}
-	fmt.Println("update info here:", updateLink.URL)
+	slog.Info("update info here", "url", updateLink.URL)
 
 	// 4. Patch some account fields directly.
 	if _, err := client.UpdateConnectedAccount(ctx, acct.ID, stripe.ConnectedAccountUpdate{
 		Metadata: map[string]string{"tier": "gold"},
 		Defaults: map[string]string{"business_profile[url]": "https://seller42.example.com"},
 	}); err != nil {
-		log.Fatalf("update account: %v", err)
+		fatal("update account", "err", err)
 	}
 
 	// 5. Connect an EXISTING Stripe account via OAuth.
 	//    First send the user to the authorize URL...
 	authURL, err := client.ConnectAuthorizeURL("csrf-state-token")
 	if err != nil {
-		log.Fatalf("authorize url: %v", err)
+		fatal("authorize url", "err", err)
 	}
-	fmt.Println("connect existing account here:", authURL)
+	slog.Info("connect existing account here", "url", authURL)
 	//    ...then in your OAuth callback exchange the code:
 	//
 	//    token, err := client.ConnectExistingAccount(ctx, code)
@@ -76,7 +75,12 @@ func main() {
 
 	// 6. Delete the connected account when done.
 	if err := client.DeleteConnectedAccount(ctx, acct.ID); err != nil {
-		log.Fatalf("delete account: %v", err)
+		fatal("delete account", "err", err)
 	}
-	fmt.Println("deleted connected account:", acct.ID)
+	slog.Info("deleted connected account", "id", acct.ID)
+}
+
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
 }

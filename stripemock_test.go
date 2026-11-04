@@ -58,7 +58,7 @@ func TestAgainstStripeMock(t *testing.T) {
 	cart := NewCart("usd").AddItem("Shirt", 2500, 2).AddPrice("price_1", 1).
 		Add(CartItem{Name: "Book", Description: "d", Amount: 1000, Images: []string{"https://example.test/i.png"}, TaxRateIDs: []string{"txr_1"}}).
 		AddShipping("Standard", 500).ShipTo("US", "CA").WithTaxRates("txr_2")
-	_, err = c.Checkout(ctx, CheckoutParams{Cart: cart, SuccessURL: "https://example.test/ok?session_id={CHECKOUT_SESSION_ID}", CancelURL: "https://example.test/no", CustomerEmail: "a@example.test", ClientReferenceID: "o1", AllowPromotionCodes: true, Metadata: map[string]string{"k": "v"}})
+	_, err = c.Checkout(ctx, CheckoutParams{Cart: cart, SuccessURL: "https://example.test/ok?session_id={CHECKOUT_SESSION_ID}", CancelURL: "https://example.test/no", CustomerEmail: "a@example.test", ClientReferenceID: "o1", AllowPromotionCodes: true, AllowedPaymentMethods: []string{"card", "link"}, Metadata: map[string]string{"k": "v"}})
 	check("Checkout", err)
 	_, err = c.Checkout(ctx, CheckoutParams{Cart: NewCart("usd").AddItem("x", 100, 1).WithAutomaticTax().ShipTo("US"), SuccessURL: "https://example.test/ok", CancelURL: "https://example.test/no", Customer: "cus_1", CouponID: "co_1", ConnectedAccount: "acct_1"})
 	check("Checkout (tax, connect)", err)
@@ -66,7 +66,7 @@ func TestAgainstStripeMock(t *testing.T) {
 	check("GetCheckoutSession", err)
 	_, err = c.CheckoutSubscription(ctx, SubscriptionCheckoutParams{PriceID: "price_1", Quantity: 2, MeteredPriceIDs: []string{"price_2"}, SuccessURL: "https://example.test/ok", CancelURL: "https://example.test/no", CustomerEmail: "a@example.test", ClientReferenceID: "u1", TrialDays: 7, TrialWithoutCard: true, AllowPromotionCodes: true, AutomaticTax: true, Metadata: map[string]string{"k": "v"}})
 	check("CheckoutSubscription", err)
-	_, err = c.CheckoutSubscription(ctx, SubscriptionCheckoutParams{PriceID: "price_1", SuccessURL: "https://example.test/ok", CancelURL: "https://example.test/no", Customer: "cus_1", CouponID: "co_1", ConnectedAccount: "acct_1"})
+	_, err = c.CheckoutSubscription(ctx, SubscriptionCheckoutParams{PriceID: "price_1", SuccessURL: "https://example.test/ok", CancelURL: "https://example.test/no", Customer: "cus_1", CouponID: "co_1", ConnectedAccount: "acct_1", AllowedPaymentMethods: []string{"card"}})
 	check("CheckoutSubscription (connect)", err)
 
 	// Portal

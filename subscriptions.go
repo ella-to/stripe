@@ -242,6 +242,13 @@ type SubscriptionCheckoutParams struct {
 	AllowPromotionCodes bool   // or let the customer type a promotion code.
 	AutomaticTax        bool   // calculate tax with Stripe Tax.
 
+	// AllowedPaymentMethods limits which payment methods Checkout may offer,
+	// e.g. []string{"card", "link"}. It filters the methods Stripe would show
+	// dynamically (based on your Dashboard settings, currency and customer
+	// location), so a listed method appears only if it is also eligible.
+	// Leave empty to offer every eligible method.
+	AllowedPaymentMethods []string
+
 	// Metadata is stored on both the Checkout session and the subscription, so
 	// subscription webhooks can find your user too.
 	Metadata map[string]string
@@ -309,6 +316,7 @@ func (c *Client) CheckoutSubscription(ctx context.Context, p SubscriptionCheckou
 	if p.AllowPromotionCodes {
 		params.AllowPromotionCodes = Bool(true)
 	}
+	params.AllowedPaymentMethodTypes = stringSlice(p.AllowedPaymentMethods)
 	if p.AutomaticTax {
 		params.AutomaticTax = &sgo.CheckoutSessionCreateAutomaticTaxParams{Enabled: Bool(true)}
 	}

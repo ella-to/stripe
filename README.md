@@ -81,11 +81,13 @@ cart := stripe.NewCart("usd").
     ShipTo("US", "CA")
 
 session, _ := client.Checkout(ctx, stripe.CheckoutParams{
-    Cart:                cart,
-    ClientReferenceID:   orderID,
-    AllowPromotionCodes: true,
-    SuccessURL:          "https://example.com/success?session_id={CHECKOUT_SESSION_ID}",
-    CancelURL:           "https://example.com/cart",
+    Cart:                  cart,
+    ClientReferenceID:     orderID,
+    AllowPromotionCodes:   true,
+    // Optional: only offer these (when eligible); empty offers every eligible method.
+    AllowedPaymentMethods: []string{"card", "link"},
+    SuccessURL:            "https://example.com/success?session_id={CHECKOUT_SESSION_ID}",
+    CancelURL:             "https://example.com/cart",
 })
 
 cs, _ := client.GetCheckoutSession(ctx, sessionID) // success page: line items, payment status

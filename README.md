@@ -203,6 +203,8 @@ acct, _ := client.RegisterConnectedAccount(ctx, stripe.ConnectedAccountParams{
     Capabilities: []string{"card_payments", "transfers"},
 })
 link, _ := client.AccountOnboardingLink(ctx, acct.ID, refreshURL, returnURL) // redirect to link.URL
+// Optionally collect eventually-due requirements up front:
+link, _ = client.AccountOnboardingLink(ctx, acct.ID, refreshURL, returnURL, stripe.CollectEventuallyDue())
 
 acct, _ = client.GetConnectedAccount(ctx, acct.ID)
 stripe.AccountReady(acct)                         // finished onboarding, can take payments?
@@ -219,6 +221,8 @@ client.RefundPayment(ctx, stripe.RefundParams{PaymentIntentID: pi, ConnectedAcco
 
 // Act as the connected account for anything else.
 client.ForAccount(acct.ID).CreateTaxRate(ctx, stripe.TaxRateParams{DisplayName: "VAT", Percentage: 19})
+// Rename/archive it later (percentage and inclusive are immutable on Stripe).
+client.ForAccount(acct.ID).UpdateTaxRate(ctx, txrID, stripe.TaxRateUpdate{DisplayName: "VAT (DE)"})
 ```
 
 Fees are collected as **application fees on direct charges**: the seller is the

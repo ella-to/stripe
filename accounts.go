@@ -131,28 +131,62 @@ func (c *Client) UpdateConnectedAccount(ctx context.Context, accountID string, p
 	return c.api.V1Accounts.Update(ctx, accountID, params)
 }
 
+// AccountLinkOption customises an onboarding or update link.
+type AccountLinkOption func(*sgo.AccountLinkCreateParams)
+
+// CollectEventuallyDue makes the link collect the requirements that will be
+// due eventually as well as the ones currently due, so the account is less
+// likely to be interrupted for more information later. Without it Stripe only
+// collects what is currently due.
+func CollectEventuallyDue() AccountLinkOption {
+	return func(p *sgo.AccountLinkCreateParams) {
+		if p.CollectionOptions == nil {
+			p.CollectionOptions = &sgo.AccountLinkCreateCollectionOptionsParams{}
+		}
+		p.CollectionOptions.Fields = String("eventually_due")
+	}
+}
+
+// IncludeFutureRequirements makes the link also collect requirements Stripe
+// has announced for the future (future_requirements). Stripe omits them by
+// default.
+func IncludeFutureRequirements() AccountLinkOption {
+	return func(p *sgo.AccountLinkCreateParams) {
+		if p.CollectionOptions == nil {
+			p.CollectionOptions = &sgo.AccountLinkCreateCollectionOptionsParams{}
+		}
+		p.CollectionOptions.FutureRequirements = String("include")
+	}
+}
+
 // AccountOnboardingLink returns a single-use URL that walks the connected
 // account through initial onboarding. Redirect the user to AccountLink.URL.
 //
 // refreshURL is hit if the link expires before completion; returnURL is hit
 // once the user finishes (or backs out of) the flow.
-func (c *Client) AccountOnboardingLink(ctx context.Context, accountID, refreshURL, returnURL string) (*AccountLink, error) {
-	return c.accountLink(ctx, accountID, refreshURL, returnURL, "account_onboarding")
+func (c *Client) AccountOnboardingLink(ctx context.Context, accountID, refreshURL, returnURL string, opts ...AccountLinkOption) (*AccountLink, error) {
+	return c.accountLink(ctx, accountID, refreshURL, returnURL, "account_onboarding", opts)
 }
 
 // RequestAccountUpdate returns a single-use URL that lets an already-onboarded
 // connected account update previously provided information (the "account_update"
 // flow). Use this when Stripe reports newly required information.
-func (c *Client) RequestAccountUpdate(ctx context.Context, accountID, refreshURL, returnURL string) (*AccountLink, error) {
-	return c.accountLink(ctx, accountID, refreshURL, returnURL, "account_update")
+func (c *Client) RequestAccountUpdate(ctx context.Context, accountID, refreshURL, returnURL string, opts ...AccountLinkOption) (*AccountLink, error) {
+	return c.accountLink(ctx, accountID, refreshURL, returnURL, "account_update", opts)
 }
 
-func (c *Client) accountLink(ctx context.Context, accountID, refreshURL, returnURL, linkType string) (*AccountLink, error) {
+func (c *Client) accountLink(ctx context.Context, accountID, refreshURL, returnURL, linkType string, opts []AccountLinkOption) (*AccountLink, error) {
+	if accountID == "" {
+		return nil, fmt.Errorf("stripe: account link requires an accountID")
+	}
 	params := &sgo.AccountLinkCreateParams{
 		Account:    String(accountID),
 		RefreshURL: String(refreshURL),
 		ReturnURL:  String(returnURL),
 		Type:       String(linkType),
+	}
+	for _, o := range opts {
+		o(params)
 	}
 	return c.api.V1AccountLinks.Create(ctx, params)
 }

@@ -61,6 +61,8 @@ type (
 	SubscriptionStatus = sgo.SubscriptionStatus
 	// PauseReason explains why a subscription is paused (see SubscriptionPauseReason).
 	PauseReason = sgo.SubscriptionStatusDetailsPausedSubscriptionType
+	// TrialOffer is a reusable introductory offer (see CreateTrialOffer).
+	TrialOffer = sgo.ProductCatalogTrialOffer
 )
 
 // Subscription statuses, re-exported for switch statements in webhook handlers.

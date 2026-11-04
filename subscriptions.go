@@ -135,6 +135,11 @@ type SubscribeParams struct {
 	// time.Now().AddDate(0, 3, 0) for a 3 month trial.
 	TrialDays int64
 	TrialEnd  time.Time
+	// TrialOfferID starts the subscription on a trial offer (see
+	// CreateTrialOffer) instead of a plain trial. Set PriceID to the offer's
+	// trial price; Stripe moves the item to the offer's ThenPriceID when the
+	// trial ends. Cannot be combined with TrialDays or TrialEnd.
+	TrialOfferID string
 
 	// CouponID applies a discount, if any.
 	CouponID string
@@ -159,6 +164,9 @@ func (c *Client) Subscribe(ctx context.Context, p SubscribeParams) (*Subscriptio
 	if p.Customer == "" || p.PriceID == "" {
 		return nil, fmt.Errorf("stripe: Subscribe requires Customer and PriceID")
 	}
+	if p.TrialOfferID != "" && (p.TrialDays > 0 || !p.TrialEnd.IsZero()) {
+		return nil, fmt.Errorf("stripe: Subscribe accepts TrialOfferID or TrialDays/TrialEnd, not both")
+	}
 	qty := p.Quantity
 	if qty == 0 {
 		qty = 1
@@ -169,6 +177,11 @@ func (c *Client) Subscribe(ctx context.Context, p SubscribeParams) (*Subscriptio
 		Items: []*sgo.SubscriptionCreateItemParams{
 			{Price: String(p.PriceID), Quantity: Int64(qty)},
 		},
+	}
+	if p.TrialOfferID != "" {
+		params.Items[0].CurrentTrial = &sgo.SubscriptionCreateItemCurrentTrialParams{
+			TrialOffer: String(p.TrialOfferID),
+		}
 	}
 	switch {
 	case !p.TrialEnd.IsZero():

@@ -43,7 +43,7 @@ how to test locally with the Stripe CLI → **[guides/](./guides)**
 | ----------------- | --------------------------------------------------------------------------------------------------------------- |
 | **Customers**     | Create / get / update / delete, find by email, attach a saved card                                              |
 | **Payments**      | Cart builder → hosted Checkout (shipping, address collection, promo codes, tax), charge a saved card, refunds  |
-| **Subscriptions** | Idempotent plans (lookup keys), subscribe via Checkout or API, trials with/without card, coupons, plan swaps, cancel / resume, cancel with refund, `HasAccess`, upcoming invoice |
+| **Subscriptions** | Idempotent plans (lookup keys), subscribe via Checkout or API, trials with/without card, reusable trial offers (intro pricing), coupons, plan swaps, pause / cancel / resume, cancel with refund, `HasAccess`, upcoming invoice |
 | **Billing portal**| One call to open the hosted portal; create a portal configuration from code                                     |
 | **Usage billing** | Meters, package pricing with automatic overage, idempotent usage events, expiring credit grants                 |
 | **Webhooks**      | Generic, type-safe dispatcher: verifies signatures, decodes into the right Go type, async or sync handlers, slog logging, forwarding; endpoint management |
@@ -119,6 +119,15 @@ session, _ := client.CheckoutSubscription(ctx, stripe.SubscriptionCheckoutParams
 })
 // ...or directly, when the customer already has a saved card.
 sub, _ := client.Subscribe(ctx, stripe.SubscribeParams{Customer: cus.ID, PriceID: monthly.ID})
+
+// Introductory pricing: $1/month for 3 months, then the regular monthly price.
+intro, _ := client.EnsurePlan(ctx, stripe.PlanParams{
+    LookupKey: "pro_intro", ProductID: monthly.Product.ID, Amount: stripe.Dollars(1), Interval: stripe.Monthly,
+})
+offer, _ := client.CreateTrialOffer(ctx, stripe.TrialOfferParams{
+    TrialPriceID: intro.ID, Intervals: 3, ThenPriceID: monthly.ID,
+})
+client.Subscribe(ctx, stripe.SubscribeParams{Customer: cus.ID, PriceID: intro.ID, TrialOfferID: offer.ID})
 
 stripe.HasAccess(sub)                // active or trialing?
 stripe.SubscriptionAccessUntil(sub)  // when access ends

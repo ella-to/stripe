@@ -46,7 +46,7 @@ how to test locally with the Stripe CLI → **[guides/](./guides)**
 | **Subscriptions** | Idempotent plans (lookup keys), subscribe via Checkout or API, trials with/without card, reusable trial offers (intro pricing), coupons, plan swaps, pause / cancel / resume, cancel with refund, `HasAccess`, upcoming invoice |
 | **Billing portal**| One call to open the hosted portal; create a portal configuration from code                                     |
 | **Usage billing** | Meters, package pricing with automatic overage, idempotent usage events, expiring credit grants                 |
-| **Webhooks**      | Generic, type-safe dispatcher: verifies signatures, decodes into the right Go type, async or sync handlers, slog logging, forwarding; endpoint management |
+| **Webhooks**      | Generic, type-safe dispatcher: verifies signatures, decodes into the right Go type, async or sync handlers, slog logging, forwarding; endpoint management; thin event notifications that fetch fresh objects |
 | **Connect**       | Express onboarding, account readiness, Express dashboard links, OAuth for existing accounts, per-account platform fees on direct charges, Checkout and subscriptions |
 | **Tax**           | Tax rates per jurisdiction (platform or connected account), Stripe Tax at Checkout                              |
 
@@ -213,7 +213,33 @@ defer hooks.Wait() // on shutdown, let in-flight handlers finish
   `400`s**. For example, endpoints created with stripe-go v86 are pinned to
   `dahlia`, but this release expects `endive`. When you upgrade, create a new
   endpoint with `CreateWebhookEndpoint` (an endpoint's API version cannot be
-  changed), switch to its secret, then delete the old one.
+  changed), switch to its secret, then delete the old one. Thin event
+  notifications (below) avoid this entirely.
+
+#### Thin event notifications
+
+An [event destination](https://docs.stripe.com/event-destinations) with the
+*thin* payload sends only the event type and a reference to the object. The
+dispatcher fetches the object's current state before calling your handler.
+Thin payloads are not tied to an API version, so upgrading stripe-go never
+breaks the destination, and handlers always see fresh data even when
+deliveries arrive out of order. The cost is one API call per handled event.
+
+```go
+events := client.Notifications(os.Getenv("STRIPE_EVENT_DESTINATION_SECRET"))
+
+stripe.OnNotification(events, stripe.NotificationInvoicePaid, func(ctx context.Context, n *stripe.Notification, inv *stripe.Invoice) error {
+    return markPaid(inv.ID) // inv was just fetched from the API
+})
+
+http.Handle("POST /stripe/events", events)
+defer events.Wait()
+```
+
+It takes the same options as `client.Webhooks` (`WithSyncHandlers`,
+`WithErrorHandler`, `WithForwardURL`, ...). Event types are the classic ones
+prefixed with `v1.`; any type works as `stripe.NotificationType("v1....")`.
+Events from connected accounts are fetched as that account automatically.
 
 ### Connect marketplace and platform fees
 

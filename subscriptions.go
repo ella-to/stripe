@@ -506,6 +506,31 @@ func SubscriptionAccessUntil(sub *Subscription) time.Time {
 	return time.Time{}
 }
 
+// SubscriptionPauseReason reports why a paused subscription was paused and
+// when, so the app can tell the customer what to do next: a PausedByRequest
+// subscription just needs resuming (Resubscribe), while the payment related
+// reasons (PausedTrialEndedWithoutCard, PausedFirstPaymentFailed,
+// PausedFinalPaymentFailed) mean a payment method must be added or fixed first,
+// e.g. via the customer portal.
+//
+// ok is false when the subscription is not paused or Stripe did not report a
+// reason. A non-empty reason may come with a zero since if Stripe omitted the
+// transition time.
+func SubscriptionPauseReason(sub *Subscription) (reason PauseReason, since time.Time, ok bool) {
+	if sub == nil || sub.Status != sgo.SubscriptionStatusPaused ||
+		sub.StatusDetails == nil || sub.StatusDetails.Paused == nil {
+		return "", time.Time{}, false
+	}
+	paused := sub.StatusDetails.Paused
+	if paused.TransitionedAt > 0 {
+		since = time.Unix(paused.TransitionedAt, 0)
+	}
+	if paused.Subscription == nil || paused.Subscription.Type == "" {
+		return "", since, false
+	}
+	return paused.Subscription.Type, since, true
+}
+
 // HasAccess reports whether the customer should currently get the features of
 // this subscription: it is active or trialing. A subscription scheduled to
 // cancel at period end stays active until then. past_due (a renewal payment

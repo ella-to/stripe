@@ -120,6 +120,7 @@ sub, _ := client.Subscribe(ctx, stripe.SubscribeParams{Customer: cus.ID, PriceID
 
 stripe.HasAccess(sub)                // active or trialing?
 stripe.SubscriptionAccessUntil(sub)  // when access ends
+stripe.SubscriptionPauseReason(sub)  // why it is paused (requested, trial ended without card, payment failed)
 client.SwapPlan(ctx, sub.ID, yearly.ID)
 client.Unsubscribe(ctx, sub.ID, stripe.CancelAtPeriodEnd)
 client.PauseSubscription(ctx, sub.ID) // status -> paused: no invoices until resumed

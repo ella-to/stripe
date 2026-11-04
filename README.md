@@ -122,7 +122,8 @@ stripe.HasAccess(sub)                // active or trialing?
 stripe.SubscriptionAccessUntil(sub)  // when access ends
 client.SwapPlan(ctx, sub.ID, yearly.ID)
 client.Unsubscribe(ctx, sub.ID, stripe.CancelAtPeriodEnd)
-client.Resubscribe(ctx, sub.ID)      // undo a pending cancellation
+client.PauseSubscription(ctx, sub.ID) // status -> paused: no invoices until resumed
+client.Resubscribe(ctx, sub.ID)      // undo a pending cancellation, or resume a paused one
 client.UnsubscribeWithRefund(ctx, sub.ID) // cancel now + full refund of the last invoice
 client.UpcomingInvoice(ctx, sub.ID)  // what the next bill looks like
 

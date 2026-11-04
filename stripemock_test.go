@@ -98,6 +98,8 @@ func TestAgainstStripeMock(t *testing.T) {
 	check("Unsubscribe (period end)", err)
 	_, err = c.Unsubscribe(ctx, "sub_1", CancelImmediately)
 	check("Unsubscribe (now)", err)
+	_, err = c.PauseSubscription(ctx, "sub_1")
+	check("PauseSubscription", err)
 	_, err = c.Resubscribe(ctx, "sub_1")
 	check("Resubscribe", err)
 	_, _, err = c.UnsubscribeWithRefund(ctx, "sub_1")

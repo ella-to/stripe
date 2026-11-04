@@ -417,6 +417,21 @@ func (c *Client) Resubscribe(ctx context.Context, subscriptionID string) (*Subsc
 	return sub, nil
 }
 
+// PauseSubscription moves a subscription to the "paused" status: it stops
+// generating invoices and does not advance to new billing periods until it is
+// resumed with Resubscribe. Stripe's defaults apply on pause: outstanding
+// metered usage is billed and unused time on licensed items is credited, both
+// as pending invoice items on the next invoice.
+//
+// Unlike pausing payment collection, the subscription's status really becomes
+// paused, so HasAccess reports false while it is paused. Subscriptions with an
+// attached schedule cannot be paused.
+func (c *Client) PauseSubscription(ctx context.Context, subscriptionID string) (*Subscription, error) {
+	params := &sgo.SubscriptionPauseParams{}
+	c.prep(&params.Params)
+	return c.api.V1Subscriptions.Pause(ctx, subscriptionID, params)
+}
+
 // UnsubscribeWithRefund cancels the subscription immediately and issues a full
 // (not prorated) refund of the most recent invoice's payment. Use this for "cancel and refund"
 // flows (e.g. within a money-back guarantee window).

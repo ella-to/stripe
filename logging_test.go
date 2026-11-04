@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 func TestStripeGoLogsGoThroughSlog(t *testing.T) {

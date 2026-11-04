@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // Interval is the billing cadence of a recurring plan.

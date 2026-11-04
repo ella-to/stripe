@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // captureServer is a fake Stripe API that records every request's form body

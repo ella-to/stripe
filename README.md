@@ -1,8 +1,8 @@
 # stripe — a simpler Stripe SDK for Go
 
 A thin, opinionated wrapper around the official
-[`stripe-go`](https://github.com/stripe/stripe-go) SDK (v86, API version
-`2026-08-26.dahlia`). The common Stripe patterns — Checkout, subscriptions,
+[`stripe-go`](https://github.com/stripe/stripe-go) SDK (v87, API version
+`2026-10-28.endive`). The common Stripe patterns — Checkout, subscriptions,
 trials, the billing portal, usage-based billing, refunds, webhooks, tax and
 Connect marketplaces — become small, task-oriented calls. Every method returns
 the **real** stripe-go types, so you can always drop down to the full SDK.
@@ -194,6 +194,13 @@ defer hooks.Wait() // on shutdown, let in-flight handlers finish
 - `client.CreateWebhookEndpoint` pins new endpoints to the SDK's API version, so
   their events always pass verification. `WithForwardURL` relays verified raw
   payloads to another service.
+- The version check compares Stripe release trains (the suffix after the date,
+  e.g. `endive`). Upgrading across a major stripe-go version moves to a new
+  train, so **endpoints created by the previous major version start receiving
+  `400`s**. For example, endpoints created with stripe-go v86 are pinned to
+  `dahlia`, but this release expects `endive`. When you upgrade, create a new
+  endpoint with `CreateWebhookEndpoint` (an endpoint's API version cannot be
+  changed), switch to its secret, then delete the old one.
 
 ### Connect marketplace and platform fees
 
@@ -310,4 +317,4 @@ for a single-account SaaS). For complete, step-by-step flows, see the
 ## Requirements
 
 - Go 1.25+
-- `github.com/stripe/stripe-go/v86` v86.4.2
+- `github.com/stripe/stripe-go/v87` v87.1.0 (API version `2026-10-28.endive`)

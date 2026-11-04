@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // RefundReason is the reason code for a refund, as required by Stripe.

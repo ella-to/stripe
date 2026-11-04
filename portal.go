@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // PortalParams opens the Stripe hosted customer portal, where customers can

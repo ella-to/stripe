@@ -83,6 +83,55 @@ func (c *Client) ListTaxRates(ctx context.Context, activeOnly bool) ([]*TaxRate,
 	return out, nil
 }
 
+// TaxRateUpdate carries the mutable fields of a tax rate. Stripe never lets
+// the Percentage or Inclusive flag of an existing rate change: to change
+// either, deactivate the rate (DeactivateTaxRate) and create a new one.
+// Empty fields are left untouched.
+type TaxRateUpdate struct {
+	DisplayName  string
+	Description  string
+	Jurisdiction string
+	Country      string
+	State        string
+	TaxType      string
+	// Active re-activates (true) or archives (false) the rate. Nil leaves it
+	// unchanged.
+	Active   *bool
+	Metadata map[string]string
+}
+
+// UpdateTaxRate patches the mutable fields of an existing tax rate. Scope the
+// client with ForAccount to update a rate on a connected account.
+func (c *Client) UpdateTaxRate(ctx context.Context, id string, p TaxRateUpdate) (*TaxRate, error) {
+	if id == "" {
+		return nil, fmt.Errorf("stripe: UpdateTaxRate requires an id")
+	}
+	params := &sgo.TaxRateUpdateParams{Active: p.Active}
+	if p.DisplayName != "" {
+		params.DisplayName = String(p.DisplayName)
+	}
+	if p.Description != "" {
+		params.Description = String(p.Description)
+	}
+	if p.Jurisdiction != "" {
+		params.Jurisdiction = String(p.Jurisdiction)
+	}
+	if p.Country != "" {
+		params.Country = String(p.Country)
+	}
+	if p.State != "" {
+		params.State = String(p.State)
+	}
+	if p.TaxType != "" {
+		params.TaxType = String(p.TaxType)
+	}
+	for k, v := range p.Metadata {
+		params.AddMetadata(k, v)
+	}
+	c.prep(&params.Params)
+	return c.api.V1TaxRates.Update(ctx, id, params)
+}
+
 // DeactivateTaxRate archives a tax rate so it can no longer be applied. Stripe
 // tax rates are immutable other than their active flag and metadata, so this is
 // how you "delete" one.

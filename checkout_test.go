@@ -14,13 +14,14 @@ func TestCheckoutCustomerAndTax(t *testing.T) {
 		AddShipping("Standard", Dollars(5))
 
 	_, err := client.Checkout(context.Background(), CheckoutParams{
-		Cart:                cart,
-		SuccessURL:          "https://example.test/ok",
-		CancelURL:           "https://example.test/cancel",
-		Customer:            "cus_1",
-		CustomerEmail:       "ignored@example.test",
-		ClientReferenceID:   "order-1",
-		AllowPromotionCodes: true,
+		Cart:                  cart,
+		SuccessURL:            "https://example.test/ok",
+		CancelURL:             "https://example.test/cancel",
+		Customer:              "cus_1",
+		CustomerEmail:         "ignored@example.test",
+		ClientReferenceID:     "order-1",
+		AllowPromotionCodes:   true,
+		AllowedPaymentMethods: []string{"card", "link"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +36,8 @@ func TestCheckoutCustomerAndTax(t *testing.T) {
 	wantForm(t, f, "shipping_address_collection[allowed_countries][1]", "CA")
 	wantForm(t, f, "client_reference_id", "order-1")
 	wantForm(t, f, "allow_promotion_codes", "true")
+	wantForm(t, f, "allowed_payment_method_types[0]", "card")
+	wantForm(t, f, "allowed_payment_method_types[1]", "link")
 	wantForm(t, f, "automatic_tax[enabled]", "true")
 	wantForm(t, f, "line_items[0][price_data][unit_amount]", "2500")
 	wantForm(t, f, "line_items[0][quantity]", "2")
@@ -58,6 +61,7 @@ func TestCheckoutCartTaxRates(t *testing.T) {
 	wantForm(t, f, "line_items[0][tax_rates][0]", "txr_default")
 	wantForm(t, f, "line_items[1][tax_rates][0]", "txr_book")
 	wantNoForm(t, f, "customer_update[address]")
+	wantNoForm(t, f, "allowed_payment_method_types[0]")
 }
 
 func TestCheckoutRejectsCouponAndPromotionCodes(t *testing.T) {
@@ -74,14 +78,15 @@ func TestCheckoutRejectsCouponAndPromotionCodes(t *testing.T) {
 func TestCheckoutSubscription(t *testing.T) {
 	client, cs := newCaptureClient(t, `{"id":"cs_1","object":"checkout.session"}`)
 	_, err := client.CheckoutSubscription(context.Background(), SubscriptionCheckoutParams{
-		PriceID:          "price_base",
-		MeteredPriceIDs:  []string{"price_usage"},
-		SuccessURL:       "https://x.test/ok",
-		CancelURL:        "https://x.test/no",
-		CustomerEmail:    "new@example.test",
-		TrialDays:        14,
-		TrialWithoutCard: true,
-		Metadata:         map[string]string{"user_id": "u1"},
+		PriceID:               "price_base",
+		MeteredPriceIDs:       []string{"price_usage"},
+		SuccessURL:            "https://x.test/ok",
+		CancelURL:             "https://x.test/no",
+		CustomerEmail:         "new@example.test",
+		TrialDays:             14,
+		TrialWithoutCard:      true,
+		Metadata:              map[string]string{"user_id": "u1"},
+		AllowedPaymentMethods: []string{"card"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +102,7 @@ func TestCheckoutSubscription(t *testing.T) {
 	wantForm(t, f, "subscription_data[trial_settings][end_behavior][missing_payment_method]", "cancel")
 	wantForm(t, f, "metadata[user_id]", "u1")
 	wantForm(t, f, "subscription_data[metadata][user_id]", "u1")
+	wantForm(t, f, "allowed_payment_method_types[0]", "card")
 }
 
 func TestCheckoutSubscriptionConnectedFee(t *testing.T) {

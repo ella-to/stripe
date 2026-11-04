@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // ChargeCustomerParams describes a one-off charge against a customer's saved

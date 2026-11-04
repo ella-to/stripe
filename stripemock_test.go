@@ -58,7 +58,7 @@ func TestAgainstStripeMock(t *testing.T) {
 	cart := NewCart("usd").AddItem("Shirt", 2500, 2).AddPrice("price_1", 1).
 		Add(CartItem{Name: "Book", Description: "d", Amount: 1000, Images: []string{"https://example.test/i.png"}, TaxRateIDs: []string{"txr_1"}}).
 		AddShipping("Standard", 500).ShipTo("US", "CA").WithTaxRates("txr_2")
-	_, err = c.Checkout(ctx, CheckoutParams{Cart: cart, SuccessURL: "https://example.test/ok?session_id={CHECKOUT_SESSION_ID}", CancelURL: "https://example.test/no", CustomerEmail: "a@example.test", ClientReferenceID: "o1", AllowPromotionCodes: true, Metadata: map[string]string{"k": "v"}})
+	_, err = c.Checkout(ctx, CheckoutParams{Cart: cart, SuccessURL: "https://example.test/ok?session_id={CHECKOUT_SESSION_ID}", CancelURL: "https://example.test/no", CustomerEmail: "a@example.test", ClientReferenceID: "o1", AllowPromotionCodes: true, AllowedPaymentMethods: []string{"card", "link"}, Metadata: map[string]string{"k": "v"}})
 	check("Checkout", err)
 	_, err = c.Checkout(ctx, CheckoutParams{Cart: NewCart("usd").AddItem("x", 100, 1).WithAutomaticTax().ShipTo("US"), SuccessURL: "https://example.test/ok", CancelURL: "https://example.test/no", Customer: "cus_1", CouponID: "co_1", ConnectedAccount: "acct_1"})
 	check("Checkout (tax, connect)", err)
@@ -66,7 +66,7 @@ func TestAgainstStripeMock(t *testing.T) {
 	check("GetCheckoutSession", err)
 	_, err = c.CheckoutSubscription(ctx, SubscriptionCheckoutParams{PriceID: "price_1", Quantity: 2, MeteredPriceIDs: []string{"price_2"}, SuccessURL: "https://example.test/ok", CancelURL: "https://example.test/no", CustomerEmail: "a@example.test", ClientReferenceID: "u1", TrialDays: 7, TrialWithoutCard: true, AllowPromotionCodes: true, AutomaticTax: true, Metadata: map[string]string{"k": "v"}})
 	check("CheckoutSubscription", err)
-	_, err = c.CheckoutSubscription(ctx, SubscriptionCheckoutParams{PriceID: "price_1", SuccessURL: "https://example.test/ok", CancelURL: "https://example.test/no", Customer: "cus_1", CouponID: "co_1", ConnectedAccount: "acct_1"})
+	_, err = c.CheckoutSubscription(ctx, SubscriptionCheckoutParams{PriceID: "price_1", SuccessURL: "https://example.test/ok", CancelURL: "https://example.test/no", Customer: "cus_1", CouponID: "co_1", ConnectedAccount: "acct_1", AllowedPaymentMethods: []string{"card"}})
 	check("CheckoutSubscription (connect)", err)
 
 	// Portal
@@ -90,6 +90,16 @@ func TestAgainstStripeMock(t *testing.T) {
 	check("Subscribe", err)
 	_, err = c.Subscribe(ctx, SubscribeParams{Customer: "cus_1", PriceID: "price_1", TrialEnd: time.Now().AddDate(0, 1, 0), ConnectedAccount: "acct_1"})
 	check("Subscribe (connect)", err)
+	_, err = c.Subscribe(ctx, SubscribeParams{Customer: "cus_1", PriceID: "price_1", TrialOfferID: "trof_1"})
+	check("Subscribe (trial offer)", err)
+	_, err = c.CreateTrialOffer(ctx, TrialOfferParams{TrialPriceID: "price_1", Intervals: 3, ThenPriceID: "price_2", Nickname: "intro"})
+	check("CreateTrialOffer", err)
+	_, err = c.GetTrialOffer(ctx, "trof_1")
+	check("GetTrialOffer", err)
+	_, err = c.ListTrialOffers(ctx, "price_1")
+	check("ListTrialOffers", err)
+	_, err = c.ArchiveTrialOffer(ctx, "trof_1")
+	check("ArchiveTrialOffer", err)
 	_, err = c.GetSubscription(ctx, "sub_1")
 	check("GetSubscription", err)
 	_, err = c.SwapPlan(ctx, "sub_1", "price_2")
@@ -98,6 +108,8 @@ func TestAgainstStripeMock(t *testing.T) {
 	check("Unsubscribe (period end)", err)
 	_, err = c.Unsubscribe(ctx, "sub_1", CancelImmediately)
 	check("Unsubscribe (now)", err)
+	_, err = c.PauseSubscription(ctx, "sub_1")
+	check("PauseSubscription", err)
 	_, err = c.Resubscribe(ctx, "sub_1")
 	check("Resubscribe", err)
 	_, _, err = c.UnsubscribeWithRefund(ctx, "sub_1")

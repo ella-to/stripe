@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	sgo "github.com/stripe/stripe-go/v86"
-	"github.com/stripe/stripe-go/v86/webhook"
+	sgo "github.com/stripe/stripe-go/v87"
+	"github.com/stripe/stripe-go/v87/webhook"
 )
 
 // TestDispatcherTypedHandler verifies the generic dispatcher: a signed payload
@@ -161,6 +161,27 @@ func TestDispatcherAPIVersionMismatch(t *testing.T) {
 	}
 	if id := <-got; id != "in_1" {
 		t.Fatalf("got invoice %q", id)
+	}
+}
+
+// TestDispatcherReleaseTrains pins down how the API version check treats Stripe
+// release trains: any version on the SDK's train is accepted, while events from
+// an endpoint created under a previous major SDK (an older train, e.g.
+// "dahlia" for stripe-go v86) are rejected until the endpoint is recreated.
+func TestDispatcherReleaseTrains(t *testing.T) {
+	const secret = "whsec_test"
+	d := NewDispatcher(secret, WithSyncHandlers(), WithErrorHandler(func(Event, error) {}))
+
+	cases := map[string]int{
+		"2026-09-30." + sgo.APIMajorVersion: http.StatusOK,         // same train, older date
+		"2026-08-26.dahlia":                 http.StatusBadRequest, // stripe-go v86 endpoints
+	}
+	for version, want := range cases {
+		rec := httptest.NewRecorder()
+		d.ServeHTTP(rec, signedRequest(t, secret, testEvent(version)))
+		if rec.Code != want {
+			t.Errorf("api_version %s: got %d, want %d", version, rec.Code, want)
+		}
 	}
 }
 

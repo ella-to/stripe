@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	sgo "github.com/stripe/stripe-go/v86"
-	"github.com/stripe/stripe-go/v86/oauth"
+	sgo "github.com/stripe/stripe-go/v87"
+	"github.com/stripe/stripe-go/v87/oauth"
 )
 
 // AccountType selects the Connect account type, which controls how much of the

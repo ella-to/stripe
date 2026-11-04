@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // Interval is the billing cadence of a recurring plan.
@@ -135,6 +135,11 @@ type SubscribeParams struct {
 	// time.Now().AddDate(0, 3, 0) for a 3 month trial.
 	TrialDays int64
 	TrialEnd  time.Time
+	// TrialOfferID starts the subscription on a trial offer (see
+	// CreateTrialOffer) instead of a plain trial. Set PriceID to the offer's
+	// trial price; Stripe moves the item to the offer's ThenPriceID when the
+	// trial ends. Cannot be combined with TrialDays or TrialEnd.
+	TrialOfferID string
 
 	// CouponID applies a discount, if any.
 	CouponID string
@@ -159,6 +164,9 @@ func (c *Client) Subscribe(ctx context.Context, p SubscribeParams) (*Subscriptio
 	if p.Customer == "" || p.PriceID == "" {
 		return nil, fmt.Errorf("stripe: Subscribe requires Customer and PriceID")
 	}
+	if p.TrialOfferID != "" && (p.TrialDays > 0 || !p.TrialEnd.IsZero()) {
+		return nil, fmt.Errorf("stripe: Subscribe accepts TrialOfferID or TrialDays/TrialEnd, not both")
+	}
 	qty := p.Quantity
 	if qty == 0 {
 		qty = 1
@@ -169,6 +177,11 @@ func (c *Client) Subscribe(ctx context.Context, p SubscribeParams) (*Subscriptio
 		Items: []*sgo.SubscriptionCreateItemParams{
 			{Price: String(p.PriceID), Quantity: Int64(qty)},
 		},
+	}
+	if p.TrialOfferID != "" {
+		params.Items[0].CurrentTrial = &sgo.SubscriptionCreateItemCurrentTrialParams{
+			TrialOffer: String(p.TrialOfferID),
+		}
 	}
 	switch {
 	case !p.TrialEnd.IsZero():
@@ -242,6 +255,13 @@ type SubscriptionCheckoutParams struct {
 	AllowPromotionCodes bool   // or let the customer type a promotion code.
 	AutomaticTax        bool   // calculate tax with Stripe Tax.
 
+	// AllowedPaymentMethods limits which payment methods Checkout may offer,
+	// e.g. []string{"card", "link"}. It filters the methods Stripe would show
+	// dynamically (based on your Dashboard settings, currency and customer
+	// location), so a listed method appears only if it is also eligible.
+	// Leave empty to offer every eligible method.
+	AllowedPaymentMethods []string
+
 	// Metadata is stored on both the Checkout session and the subscription, so
 	// subscription webhooks can find your user too.
 	Metadata map[string]string
@@ -309,6 +329,7 @@ func (c *Client) CheckoutSubscription(ctx context.Context, p SubscriptionCheckou
 	if p.AllowPromotionCodes {
 		params.AllowPromotionCodes = Bool(true)
 	}
+	params.AllowedPaymentMethodTypes = stringSlice(p.AllowedPaymentMethods)
 	if p.AutomaticTax {
 		params.AutomaticTax = &sgo.CheckoutSessionCreateAutomaticTaxParams{Enabled: Bool(true)}
 	}
@@ -417,6 +438,21 @@ func (c *Client) Resubscribe(ctx context.Context, subscriptionID string) (*Subsc
 	return sub, nil
 }
 
+// PauseSubscription moves a subscription to the "paused" status: it stops
+// generating invoices and does not advance to new billing periods until it is
+// resumed with Resubscribe. Stripe's defaults apply on pause: outstanding
+// metered usage is billed and unused time on licensed items is credited, both
+// as pending invoice items on the next invoice.
+//
+// Unlike pausing payment collection, the subscription's status really becomes
+// paused, so HasAccess reports false while it is paused. Subscriptions with an
+// attached schedule cannot be paused.
+func (c *Client) PauseSubscription(ctx context.Context, subscriptionID string) (*Subscription, error) {
+	params := &sgo.SubscriptionPauseParams{}
+	c.prep(&params.Params)
+	return c.api.V1Subscriptions.Pause(ctx, subscriptionID, params)
+}
+
 // UnsubscribeWithRefund cancels the subscription immediately and issues a full
 // (not prorated) refund of the most recent invoice's payment. Use this for "cancel and refund"
 // flows (e.g. within a money-back guarantee window).
@@ -489,6 +525,31 @@ func SubscriptionAccessUntil(sub *Subscription) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// SubscriptionPauseReason reports why a paused subscription was paused and
+// when, so the app can tell the customer what to do next: a PausedByRequest
+// subscription just needs resuming (Resubscribe), while the payment related
+// reasons (PausedTrialEndedWithoutCard, PausedFirstPaymentFailed,
+// PausedFinalPaymentFailed) mean a payment method must be added or fixed first,
+// e.g. via the customer portal.
+//
+// ok is false when the subscription is not paused or Stripe did not report a
+// reason. A non-empty reason may come with a zero since if Stripe omitted the
+// transition time.
+func SubscriptionPauseReason(sub *Subscription) (reason PauseReason, since time.Time, ok bool) {
+	if sub == nil || sub.Status != sgo.SubscriptionStatusPaused ||
+		sub.StatusDetails == nil || sub.StatusDetails.Paused == nil {
+		return "", time.Time{}, false
+	}
+	paused := sub.StatusDetails.Paused
+	if paused.TransitionedAt > 0 {
+		since = time.Unix(paused.TransitionedAt, 0)
+	}
+	if paused.Subscription == nil || paused.Subscription.Type == "" {
+		return "", since, false
+	}
+	return paused.Subscription.Type, since, true
 }
 
 // HasAccess reports whether the customer should currently get the features of

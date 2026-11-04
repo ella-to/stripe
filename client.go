@@ -1,5 +1,5 @@
 // Package stripe is a thin, opinionated wrapper around the official stripe-go
-// SDK (github.com/stripe/stripe-go/v86). It collapses the most common Stripe
+// SDK (github.com/stripe/stripe-go/v87). It collapses the most common Stripe
 // integration patterns - hosted Checkout, subscriptions and trials, the
 // customer portal, usage based billing, refunds, webhooks, tax and Connect
 // marketplaces - into a small, task oriented API so that the caller does not
@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"math"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // Client is the entry point for every feature in this package. It wraps a

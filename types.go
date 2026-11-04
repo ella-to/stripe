@@ -1,6 +1,6 @@
 package stripe
 
-import sgo "github.com/stripe/stripe-go/v86"
+import sgo "github.com/stripe/stripe-go/v87"
 
 // Re-exported stripe-go types. Aliasing them here means callers can depend on a
 // single import (this package) for both the high level helpers and the rich
@@ -59,6 +59,10 @@ type (
 	Charge = sgo.Charge
 	// SubscriptionStatus is the lifecycle state of a Subscription.
 	SubscriptionStatus = sgo.SubscriptionStatus
+	// PauseReason explains why a subscription is paused (see SubscriptionPauseReason).
+	PauseReason = sgo.SubscriptionStatusDetailsPausedSubscriptionType
+	// TrialOffer is a reusable introductory offer (see CreateTrialOffer).
+	TrialOffer = sgo.ProductCatalogTrialOffer
 )
 
 // Subscription statuses, re-exported for switch statements in webhook handlers.
@@ -71,6 +75,21 @@ const (
 	SubscriptionIncomplete        = sgo.SubscriptionStatusIncomplete
 	SubscriptionIncompleteExpired = sgo.SubscriptionStatusIncompleteExpired
 	SubscriptionPaused            = sgo.SubscriptionStatusPaused
+)
+
+// Reasons a subscription can be paused, as reported by SubscriptionPauseReason.
+const (
+	// PausedByRequest: paused on purpose, e.g. via PauseSubscription.
+	PausedByRequest = sgo.SubscriptionStatusDetailsPausedSubscriptionTypePauseRequested
+	// PausedTrialEndedWithoutCard: a trial started without a card ended and
+	// no payment method was added (see TrialWithoutCard).
+	PausedTrialEndedWithoutCard = sgo.SubscriptionStatusDetailsPausedSubscriptionTypeTrialEndWithoutPaymentMethod
+	// PausedFirstPaymentFailed: the first payment failed.
+	PausedFirstPaymentFailed = sgo.SubscriptionStatusDetailsPausedSubscriptionTypeFirstPaymentFailure
+	// PausedFinalPaymentFailed: the last payment retry failed.
+	PausedFinalPaymentFailed = sgo.SubscriptionStatusDetailsPausedSubscriptionTypeFinalPaymentFailure
+	// PausedBySystem: Stripe paused it for another reason.
+	PausedBySystem = sgo.SubscriptionStatusDetailsPausedSubscriptionTypeSystem
 )
 
 // A small selection of the most frequently handled webhook event types,

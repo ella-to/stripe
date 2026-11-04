@@ -1,8 +1,8 @@
 # stripe — a simpler Stripe SDK for Go
 
 A thin, opinionated wrapper around the official
-[`stripe-go`](https://github.com/stripe/stripe-go) SDK (v86, API version
-`2026-08-26.dahlia`). The common Stripe patterns — Checkout, subscriptions,
+[`stripe-go`](https://github.com/stripe/stripe-go) SDK (v87, API version
+`2026-10-28.endive`). The common Stripe patterns — Checkout, subscriptions,
 trials, the billing portal, usage-based billing, refunds, webhooks, tax and
 Connect marketplaces — become small, task-oriented calls. Every method returns
 the **real** stripe-go types, so you can always drop down to the full SDK.
@@ -43,10 +43,10 @@ how to test locally with the Stripe CLI → **[guides/](./guides)**
 | ----------------- | --------------------------------------------------------------------------------------------------------------- |
 | **Customers**     | Create / get / update / delete, find by email, attach a saved card                                              |
 | **Payments**      | Cart builder → hosted Checkout (shipping, address collection, promo codes, tax), charge a saved card, refunds  |
-| **Subscriptions** | Idempotent plans (lookup keys), subscribe via Checkout or API, trials with/without card, coupons, plan swaps, cancel / resume, cancel with refund, `HasAccess`, upcoming invoice |
+| **Subscriptions** | Idempotent plans (lookup keys), subscribe via Checkout or API, trials with/without card, reusable trial offers (intro pricing), coupons, plan swaps, pause / cancel / resume, cancel with refund, `HasAccess`, upcoming invoice |
 | **Billing portal**| One call to open the hosted portal; create a portal configuration from code                                     |
 | **Usage billing** | Meters, package pricing with automatic overage, idempotent usage events, expiring credit grants                 |
-| **Webhooks**      | Generic, type-safe dispatcher: verifies signatures, decodes into the right Go type, async or sync handlers, slog logging, forwarding; endpoint management |
+| **Webhooks**      | Generic, type-safe dispatcher: verifies signatures, decodes into the right Go type, async or sync handlers, slog logging, forwarding; endpoint management; thin event notifications that fetch fresh objects |
 | **Connect**       | Express onboarding, account readiness, Express dashboard links, OAuth for existing accounts, per-account platform fees on direct charges, Checkout and subscriptions |
 | **Tax**           | Tax rates per jurisdiction (platform or connected account), Stripe Tax at Checkout                              |
 
@@ -81,11 +81,13 @@ cart := stripe.NewCart("usd").
     ShipTo("US", "CA")
 
 session, _ := client.Checkout(ctx, stripe.CheckoutParams{
-    Cart:                cart,
-    ClientReferenceID:   orderID,
-    AllowPromotionCodes: true,
-    SuccessURL:          "https://example.com/success?session_id={CHECKOUT_SESSION_ID}",
-    CancelURL:           "https://example.com/cart",
+    Cart:                  cart,
+    ClientReferenceID:     orderID,
+    AllowPromotionCodes:   true,
+    // Optional: only offer these (when eligible); empty offers every eligible method.
+    AllowedPaymentMethods: []string{"card", "link"},
+    SuccessURL:            "https://example.com/success?session_id={CHECKOUT_SESSION_ID}",
+    CancelURL:             "https://example.com/cart",
 })
 
 cs, _ := client.GetCheckoutSession(ctx, sessionID) // success page: line items, payment status
@@ -118,11 +120,22 @@ session, _ := client.CheckoutSubscription(ctx, stripe.SubscriptionCheckoutParams
 // ...or directly, when the customer already has a saved card.
 sub, _ := client.Subscribe(ctx, stripe.SubscribeParams{Customer: cus.ID, PriceID: monthly.ID})
 
+// Introductory pricing: $1/month for 3 months, then the regular monthly price.
+intro, _ := client.EnsurePlan(ctx, stripe.PlanParams{
+    LookupKey: "pro_intro", ProductID: monthly.Product.ID, Amount: stripe.Dollars(1), Interval: stripe.Monthly,
+})
+offer, _ := client.CreateTrialOffer(ctx, stripe.TrialOfferParams{
+    TrialPriceID: intro.ID, Intervals: 3, ThenPriceID: monthly.ID,
+})
+client.Subscribe(ctx, stripe.SubscribeParams{Customer: cus.ID, PriceID: intro.ID, TrialOfferID: offer.ID})
+
 stripe.HasAccess(sub)                // active or trialing?
 stripe.SubscriptionAccessUntil(sub)  // when access ends
+stripe.SubscriptionPauseReason(sub)  // why it is paused (requested, trial ended without card, payment failed)
 client.SwapPlan(ctx, sub.ID, yearly.ID)
 client.Unsubscribe(ctx, sub.ID, stripe.CancelAtPeriodEnd)
-client.Resubscribe(ctx, sub.ID)      // undo a pending cancellation
+client.PauseSubscription(ctx, sub.ID) // status -> paused: no invoices until resumed
+client.Resubscribe(ctx, sub.ID)      // undo a pending cancellation, or resume a paused one
 client.UnsubscribeWithRefund(ctx, sub.ID) // cancel now + full refund of the last invoice
 client.UpcomingInvoice(ctx, sub.ID)  // what the next bill looks like
 
@@ -194,6 +207,39 @@ defer hooks.Wait() // on shutdown, let in-flight handlers finish
 - `client.CreateWebhookEndpoint` pins new endpoints to the SDK's API version, so
   their events always pass verification. `WithForwardURL` relays verified raw
   payloads to another service.
+- The version check compares Stripe release trains (the suffix after the date,
+  e.g. `endive`). Upgrading across a major stripe-go version moves to a new
+  train, so **endpoints created by the previous major version start receiving
+  `400`s**. For example, endpoints created with stripe-go v86 are pinned to
+  `dahlia`, but this release expects `endive`. When you upgrade, create a new
+  endpoint with `CreateWebhookEndpoint` (an endpoint's API version cannot be
+  changed), switch to its secret, then delete the old one. Thin event
+  notifications (below) avoid this entirely.
+
+#### Thin event notifications
+
+An [event destination](https://docs.stripe.com/event-destinations) with the
+*thin* payload sends only the event type and a reference to the object. The
+dispatcher fetches the object's current state before calling your handler.
+Thin payloads are not tied to an API version, so upgrading stripe-go never
+breaks the destination, and handlers always see fresh data even when
+deliveries arrive out of order. The cost is one API call per handled event.
+
+```go
+events := client.Notifications(os.Getenv("STRIPE_EVENT_DESTINATION_SECRET"))
+
+stripe.OnNotification(events, stripe.NotificationInvoicePaid, func(ctx context.Context, n *stripe.Notification, inv *stripe.Invoice) error {
+    return markPaid(inv.ID) // inv was just fetched from the API
+})
+
+http.Handle("POST /stripe/events", events)
+defer events.Wait()
+```
+
+It takes the same options as `client.Webhooks` (`WithSyncHandlers`,
+`WithErrorHandler`, `WithForwardURL`, ...). Event types are the classic ones
+prefixed with `v1.`; any type works as `stripe.NotificationType("v1....")`.
+Events from connected accounts are fetched as that account automatically.
 
 ### Connect marketplace and platform fees
 
@@ -310,4 +356,4 @@ for a single-account SaaS). For complete, step-by-step flows, see the
 ## Requirements
 
 - Go 1.25+
-- `github.com/stripe/stripe-go/v86` v86.4.2
+- `github.com/stripe/stripe-go/v87` v87.1.0 (API version `2026-10-28.endive`)

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // captureServer is a fake Stripe API that records every request's form body
@@ -20,6 +20,7 @@ type captureServer struct {
 type capturedRequest struct {
 	Method, Path string
 	Form         url.Values
+	Header       http.Header
 }
 
 func newCaptureClient(t *testing.T, response string) (*Client, *captureServer) {
@@ -28,7 +29,7 @@ func newCaptureClient(t *testing.T, response string) (*Client, *captureServer) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		cs.mu.Lock()
-		cs.reqs = append(cs.reqs, capturedRequest{Method: r.Method, Path: r.URL.Path, Form: r.Form})
+		cs.reqs = append(cs.reqs, capturedRequest{Method: r.Method, Path: r.URL.Path, Form: r.Form, Header: r.Header})
 		cs.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(response))

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	sgo "github.com/stripe/stripe-go/v86"
+	sgo "github.com/stripe/stripe-go/v87"
 )
 
 // RefundReason is the reason code for a refund, as required by Stripe.
@@ -192,6 +192,13 @@ type CheckoutParams struct {
 	// AllowPromotionCodes.
 	CouponID string
 
+	// AllowedPaymentMethods limits which payment methods Checkout may offer,
+	// e.g. []string{"card", "link"}. It filters the methods Stripe would show
+	// dynamically (based on your Dashboard settings, currency and customer
+	// location), so a listed method appears only if it is also eligible.
+	// Leave empty to offer every eligible method.
+	AllowedPaymentMethods []string
+
 	// ConnectedAccount, when set, turns the checkout into a direct charge on
 	// that connected account ("acct_..."): the account becomes the settlement
 	// merchant (and pays the Stripe processing fee), while your platform
@@ -243,6 +250,7 @@ func (c *Client) Checkout(ctx context.Context, p CheckoutParams) (*CheckoutSessi
 	if p.CouponID != "" {
 		params.Discounts = []*sgo.CheckoutSessionCreateDiscountParams{{Coupon: String(p.CouponID)}}
 	}
+	params.AllowedPaymentMethodTypes = stringSlice(p.AllowedPaymentMethods)
 	if len(cart.shipTo) > 0 {
 		params.ShippingAddressCollection = &sgo.CheckoutSessionCreateShippingAddressCollectionParams{
 			AllowedCountries: stringSlice(cart.shipTo),
